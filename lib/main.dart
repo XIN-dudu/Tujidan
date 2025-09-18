@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:test_flutter/auth_service.dart';
+import 'package:test_flutter/login_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -14,7 +16,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: const HomePage(),
+      home: const _RootDecider(),
     );
   }
 }
@@ -75,6 +77,23 @@ class _HomePageState extends State<HomePage> {
         selectedItemColor: Colors.blue,
         unselectedItemColor: Colors.grey,
         onTap: _onItemTapped,
+      ),
+      appBar: AppBar(
+        title: const Text('四象限应用'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await AuthService().logout();
+              if (!context.mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginPage()),
+                (_) => false,
+              );
+            },
+            tooltip: '退出登录',
+          ),
+        ],
       ),
     );
   }
@@ -158,5 +177,43 @@ class QuadrantPage extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _RootDecider extends StatefulWidget {
+  const _RootDecider();
+
+  @override
+  State<_RootDecider> createState() => _RootDeciderState();
+}
+
+class _RootDeciderState extends State<_RootDecider> {
+  final AuthService _authService = AuthService();
+  bool _loading = true;
+  bool _loggedIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    final bool ok = await _authService.isLoggedIn();
+    if (!mounted) return;
+    setState(() {
+      _loggedIn = ok;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return _loggedIn ? const HomePage() : const LoginPage();
   }
 }
