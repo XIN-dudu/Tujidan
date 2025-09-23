@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:test_flutter/auth_service.dart';
 import 'package:test_flutter/login_page.dart';
+import 'package:test_flutter/pages/log_list_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -34,7 +35,7 @@ class _HomePageState extends State<HomePage> {
   static final List<Widget> _pages = [
     const QuadrantPage(),
     const Center(child: Text('视图页面')),
-    const Center(child: Text('日志页面')),
+    const LogListPage(),
     const Center(child: Text('AI地图页面')),
     const Center(child: Text('我的页面')),
   ];
@@ -79,7 +80,7 @@ class _HomePageState extends State<HomePage> {
         onTap: _onItemTapped,
       ),
       appBar: AppBar(
-        title: const Text('四象限应用'),
+        title: const Text('潘多拉'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -179,6 +180,7 @@ class QuadrantPage extends StatelessWidget {
     );
   }
 }
+
 
 class _RootDecider extends StatefulWidget {
   const _RootDecider();

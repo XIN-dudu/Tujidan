@@ -15,11 +15,12 @@
 ```bash
 cd backend
 npm install
-node start
+npm start
 ```
 
 #### 2. 启动Flutter应用
 ```bash
+flutter clean
 flutter pub get
 flutter run
 ```
