@@ -20,17 +20,37 @@ class LogEntry {
   });
 
   factory LogEntry.fromJson(Map<String, dynamic> json) {
+    String toStringValue(dynamic v) => v == null ? '' : v.toString();
+    String? toNullableString(dynamic v) => v == null ? null : v.toString();
+    TaskPriority parsePriority(dynamic v) {
+      final s = (v ?? '').toString();
+      switch (s) {
+        case 'high':
+          return TaskPriority.high;
+        case 'mid':
+        case 'medium':
+          return TaskPriority.medium;
+        default:
+          return TaskPriority.low;
+      }
+    }
+    DateTime parseTime(dynamic v) {
+      if (v == null) return DateTime.now();
+      try {
+        return DateTime.parse(v.toString());
+      } catch (_) {
+        return DateTime.now();
+      }
+    }
+
     return LogEntry(
-      id: json['id'] ?? '',
-      content: json['content'] ?? '',
-      taskId: json['taskId'],
-      priority: TaskPriority.values.firstWhere(
-        (e) => e.name == json['priority'],
-        orElse: () => TaskPriority.low,
-      ),
-      time: DateTime.parse(json['time'] ?? DateTime.now().toIso8601String()),
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+      id: toStringValue(json['id']),
+      content: (json['content'] ?? '').toString(),
+      taskId: toNullableString(json['taskId'] ?? json['task_id']),
+      priority: parsePriority(json['priority']),
+      time: parseTime(json['time'] ?? json['time_from'] ?? json['created_at']),
+      createdAt: parseTime(json['createdAt'] ?? json['created_at']),
+      updatedAt: parseTime(json['updatedAt'] ?? json['updated_at']),
     );
   }
 

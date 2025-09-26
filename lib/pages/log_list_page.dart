@@ -3,6 +3,7 @@ import '../models/log_entry.dart';
 import '../models/task.dart';
 import '../services/log_service.dart';
 import 'log_edit_page.dart';
+import 'log_view_page.dart';
 
 class LogListPage extends StatefulWidget {
   const LogListPage({super.key});
