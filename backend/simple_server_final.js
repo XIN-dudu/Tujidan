@@ -435,17 +435,82 @@ app.post('/api/logs', auth, async (req, res) => {
 app.get('/api/logs', auth, async (req, res) => {
   try {
     const connection = await getConn();
-    const [rows] = await connection.execute(
-      'SELECT * FROM logs WHERE author_user_id = ? ORDER BY created_at DESC LIMIT 100',
-      [req.user.id]
-    );
+    const { type, q, startDate, endDate } = req.query;
+
+    const params = [req.user.id];
+    let sql = 'SELECT * FROM logs WHERE author_user_id = ?'; // 修改这里
+
+    // 类型过滤
+    if (type && ['work', 'study', 'life', 'other'].includes(type)) {
+      sql += ' AND log_type = ?';
+      params.push(type);
+    }
+
+    // 时间范围过滤
+    if (startDate && endDate) {
+      sql += ' AND created_at BETWEEN ? AND ?';
+      params.push(startDate, endDate);
+    }
+
+    // 搜索关键词过滤
+    if (q && q.trim() !== '') {
+      sql += ' AND content LIKE ?';
+      params.push(`%${q.trim()}%`);
+    }
+
+    // 时间倒序，限制100条
+    sql += ' ORDER BY created_at DESC LIMIT 100';
+
+    const [rows] = await connection.execute(sql, params);
     await connection.end();
-    res.json({ success: true, logs: rows });
+
+    // 返回前端固定结构
+    res.json({
+      success: true,
+      message: '获取日志成功',
+      data: rows.map(row => ({
+        id: row.id,
+        userId: row.author_user_id, // 修改这里
+        title: row.title,
+        content: row.content,
+        logType: row.log_type,
+        priority: row.priority,
+        logStatus: row.log_status,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        totalHours: row.total_hours,
+        timeTag: row.time_tag,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        taskId: row.task_id,
+      })),
+      code: 200,
+    });
   } catch (e) {
     console.error('查询日志失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误', code: 500 });
+  }
+});
+
+
+
+app.get('/api/logs/:id', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    const [rows] = await connection.execute(
+      'SELECT * FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1',
+      [id, req.user.id]
+    );
+    await connection.end();
+    if (rows.length === 0) return res.status(404).json({ success: false, message: '日志不存在' });
+    res.json({ success: true, log: rows[0] });
+  } catch (e) {
+    console.error('获取日志失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
   }
 });
+
 
 app.get('/api/logs/:id', auth, async (req, res) => {
   try {

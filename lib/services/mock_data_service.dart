@@ -1,5 +1,7 @@
 import '../models/task.dart';
 import '../models/log_entry.dart';
+import '../models/task.dart';
+
 
 class MockDataService {
   static final List<Task> _mockTasks = [
@@ -82,9 +84,9 @@ class MockDataService {
     ),
   ];
 
-  // 任务相关方法
+  // ------------------- Task Methods -------------------
   static Future<List<Task>> getTasks() async {
-    await Future.delayed(const Duration(milliseconds: 500)); // 模拟网络延迟
+    await Future.delayed(const Duration(milliseconds: 500));
     return List.from(_mockTasks);
   }
 
@@ -92,7 +94,7 @@ class MockDataService {
     await Future.delayed(const Duration(milliseconds: 300));
     try {
       return _mockTasks.firstWhere((task) => task.id == id);
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
@@ -128,7 +130,7 @@ class MockDataService {
     _mockTasks.removeWhere((task) => task.id == id);
   }
 
-  // 日志相关方法
+  // ------------------- LogEntry Methods -------------------
   static Future<List<LogEntry>> getLogs() async {
     await Future.delayed(const Duration(milliseconds: 500));
     return List.from(_mockLogs);
@@ -138,7 +140,7 @@ class MockDataService {
     await Future.delayed(const Duration(milliseconds: 300));
     try {
       return _mockLogs.firstWhere((log) => log.id == id);
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
@@ -172,5 +174,13 @@ class MockDataService {
   static Future<void> deleteLog(String id) async {
     await Future.delayed(const Duration(milliseconds: 300));
     _mockLogs.removeWhere((log) => log.id == id);
+  }
+
+  static Future<List<LogEntry>> getLogsByDateRange(DateTime startDate, DateTime endDate) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+    return _mockLogs.where((log) =>
+    log.time.isAfter(startDate.subtract(const Duration(seconds: 1))) &&
+        log.time.isBefore(endDate.add(const Duration(seconds: 1)))
+    ).toList();
   }
 }

@@ -45,7 +45,11 @@ class _LogViewPageState extends State<LogViewPage> {
           break;
       }
 
-      final response = await LogService.getLogsByDateRange(startDate, endDate);
+      final response = await LogService.getLogsFiltered(
+        startTime: startDate,
+        endTime: endDate,
+      );
+
       if (response.success && response.data != null) {
         setState(() {
           _logs = response.data!;

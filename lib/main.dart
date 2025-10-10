@@ -90,7 +90,7 @@ class _HomePageState extends State<HomePage> {
               if (!context.mounted) return;
               Navigator.of(context).pushAndRemoveUntil(
                 MaterialPageRoute(builder: (_) => const LoginPage()),
-                (_) => false,
+                    (_) => false,
               );
             },
             tooltip: '退出登录',
@@ -115,7 +115,6 @@ class QuadrantPage extends StatelessWidget {
           Expanded(
             child: Row(
               children: [
-                // 第一象限
                 Expanded(
                   child: Container(
                     margin: const EdgeInsets.all(8),
@@ -128,7 +127,6 @@ class QuadrantPage extends StatelessWidget {
                     ),
                   ),
                 ),
-                // 第二象限
                 Expanded(
                   child: Container(
                     margin: const EdgeInsets.all(8),
@@ -147,7 +145,6 @@ class QuadrantPage extends StatelessWidget {
           Expanded(
             child: Row(
               children: [
-                // 第三象限
                 Expanded(
                   child: Container(
                     margin: const EdgeInsets.all(8),
@@ -160,7 +157,6 @@ class QuadrantPage extends StatelessWidget {
                     ),
                   ),
                 ),
-                // 第四象限
                 Expanded(
                   child: Container(
                     margin: const EdgeInsets.all(8),
@@ -182,7 +178,6 @@ class QuadrantPage extends StatelessWidget {
   }
 }
 
-
 class _RootDecider extends StatefulWidget {
   const _RootDecider();
 
@@ -195,10 +190,18 @@ class _RootDeciderState extends State<_RootDecider> {
   bool _loading = true;
   bool _loggedIn = false;
 
+  /// 调试开关：true 表示直接跳过登录
+  final bool skipLogin = false;
+
   @override
   void initState() {
     super.initState();
-    _check();
+    if (!skipLogin) {
+      _check();
+    } else {
+      _loading = false;
+      _loggedIn = true;
+    }
   }
 
   Future<void> _check() async {
