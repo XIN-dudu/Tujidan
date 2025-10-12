@@ -3,6 +3,7 @@ import 'package:test_flutter/auth_service.dart';
 import 'package:test_flutter/login_page.dart';
 import 'package:test_flutter/pages/log_list_page.dart';
 import 'package:test_flutter/pages/log_view_page.dart';
+import 'package:test_flutter/pages/user_profile_page.dart';
 
 void main() {
   runApp(const MyApp());

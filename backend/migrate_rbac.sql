@@ -1,8 +1,28 @@
--- 使用你的数据库（假设已经存在）
+-- RBAC系统数据库迁移脚本
+-- 请在执行前备份数据库！
+
 USE tujidan;
 
--- 创建用户表
-CREATE TABLE IF NOT EXISTS users (
+-- 1. 备份现有用户表数据（如果需要）
+CREATE TABLE IF NOT EXISTS users_backup AS SELECT * FROM users;
+
+-- 2. 检查并处理外键约束
+-- 首先检查是否有外键约束
+SELECT 
+    CONSTRAINT_NAME,
+    TABLE_NAME,
+    COLUMN_NAME,
+    REFERENCED_TABLE_NAME,
+    REFERENCED_COLUMN_NAME
+FROM information_schema.KEY_COLUMN_USAGE 
+WHERE REFERENCED_TABLE_NAME = 'users' 
+AND TABLE_SCHEMA = DATABASE();
+
+-- 3. 临时禁用外键检查
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- 4. 创建新的用户表结构
+CREATE TABLE IF NOT EXISTS users_new (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(64) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
@@ -20,7 +40,37 @@ CREATE TABLE IF NOT EXISTS users (
     INDEX idx_users_department (department_id)
 );
 
--- 角色表
+-- 5. 迁移现有用户数据（如果有的话）
+INSERT INTO users_new (id, username, password_hash, email, real_name, status, created_at, updated_at)
+SELECT 
+    id, 
+    COALESCE(email, CONCAT('user_', id)) as username, 
+    password as password_hash, 
+    email, 
+    COALESCE(email, CONCAT('用户_', id)) as real_name, 
+    1 as status, 
+    created_at, 
+    updated_at
+FROM users
+ON DUPLICATE KEY UPDATE username = username;
+
+-- 6. 删除旧表并重命名新表
+DROP TABLE IF EXISTS users;
+RENAME TABLE users_new TO users;
+
+-- 7. 重新启用外键检查
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- 8. 修改现有表的外键字段类型以匹配新的users表
+-- 修改tasks表
+ALTER TABLE tasks MODIFY COLUMN owner_user_id BIGINT NOT NULL;
+ALTER TABLE tasks MODIFY COLUMN creator_user_id BIGINT NOT NULL;
+
+-- 修改logs表
+ALTER TABLE logs MODIFY COLUMN author_user_id BIGINT NOT NULL;
+ALTER TABLE logs MODIFY COLUMN task_id BIGINT NULL;
+
+-- 9. 创建角色表
 CREATE TABLE IF NOT EXISTS roles (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     role_name VARCHAR(64) NOT NULL UNIQUE,
@@ -29,7 +79,7 @@ CREATE TABLE IF NOT EXISTS roles (
     INDEX idx_roles_name (role_name)
 );
 
--- 用户角色关联表
+-- 7. 创建用户角色关联表
 CREATE TABLE IF NOT EXISTS user_roles (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
@@ -42,7 +92,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
     INDEX idx_user_roles_role (role_id)
 );
 
--- 权限表
+-- 8. 创建权限表
 CREATE TABLE IF NOT EXISTS permissions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     perm_key VARCHAR(64) NOT NULL UNIQUE,
@@ -54,7 +104,7 @@ CREATE TABLE IF NOT EXISTS permissions (
     INDEX idx_permissions_module (module)
 );
 
--- 角色权限关联表
+-- 9. 创建角色权限关联表
 CREATE TABLE IF NOT EXISTS role_permissions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     role_id BIGINT NOT NULL,
@@ -67,7 +117,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     INDEX idx_role_permissions_permission (permission_id)
 );
 
--- 插入初始角色数据
+-- 10. 插入初始角色数据
 INSERT INTO roles (role_name, description) VALUES 
 ('founder', '创始人，拥有所有权限'),
 ('admin', '管理员，拥有管理权限'),
@@ -75,7 +125,7 @@ INSERT INTO roles (role_name, description) VALUES
 ('staff', '普通员工，基础权限')
 ON DUPLICATE KEY UPDATE role_name = role_name;
 
--- 插入初始权限数据
+-- 11. 插入初始权限数据
 INSERT INTO permissions (perm_key, name, module, description) VALUES 
 -- 用户管理权限
 ('user:create', '创建用户', 'user_management', '创建新用户'),
@@ -111,7 +161,7 @@ INSERT INTO permissions (perm_key, name, module, description) VALUES
 ('system:logs', '系统日志', 'system_management', '查看系统日志')
 ON DUPLICATE KEY UPDATE perm_key = perm_key;
 
--- 为角色分配权限
+-- 12. 为角色分配权限
 -- Founder 拥有所有权限
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id 
@@ -143,41 +193,13 @@ WHERE r.role_name = 'staff'
 AND p.perm_key IN ('task:view', 'log:create', 'log:view', 'log:edit')
 ON DUPLICATE KEY UPDATE role_id = role_id;
 
--- 任务表
-CREATE TABLE IF NOT EXISTS tasks (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(64) NOT NULL,
-    priority ENUM('high','mid','low') NOT NULL DEFAULT 'low',
-    progress TINYINT UNSIGNED NOT NULL DEFAULT 0, -- 0~100
-    due_time DATETIME NULL,
-    owner_user_id INT NOT NULL,
-    creator_user_id INT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_tasks_owner FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_tasks_creator FOREIGN KEY (creator_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT chk_tasks_progress CHECK (progress <= 100),
-    INDEX idx_tasks_owner (owner_user_id),
-    INDEX idx_tasks_due (due_time),
-    UNIQUE KEY uk_task_name_creator (name, creator_user_id)
-);
+-- 13. 为现有用户分配默认角色（staff）
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE r.role_name = 'staff'
+-- AND NOT EXISTS (
+--     SELECT 1 FROM user_roles ur WHERE ur.user_id = u.id
+-- );
 
--- 日志表
-CREATE TABLE IF NOT EXISTS logs (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    author_user_id INT NOT NULL,
-    content TEXT NOT NULL,
-    priority ENUM('high','mid','low') NOT NULL DEFAULT 'low',
-    progress TINYINT UNSIGNED NOT NULL DEFAULT 0, -- 0~100
-    time_from DATETIME NULL,
-    time_to DATETIME NULL,
-    task_id INT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_logs_author FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-    CONSTRAINT fk_logs_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
-    CONSTRAINT chk_logs_progress CHECK (progress <= 100),
-    INDEX idx_logs_author (author_user_id),
-    INDEX idx_logs_task (task_id),
-    INDEX idx_logs_time_from (time_from)
-);
+SELECT 'RBAC系统迁移完成！' as message;

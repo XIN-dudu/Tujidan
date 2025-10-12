@@ -10,7 +10,11 @@ class RegisterPage extends StatefulWidget {
 
 class _RegisterPageState extends State<RegisterPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _realNameController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _positionController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmController = TextEditingController();
   final AuthService _authService = AuthService();
@@ -19,7 +23,11 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   void dispose() {
+    _usernameController.dispose();
     _emailController.dispose();
+    _realNameController.dispose();
+    _phoneController.dispose();
+    _positionController.dispose();
     _passwordController.dispose();
     _confirmController.dispose();
     super.dispose();
@@ -29,8 +37,12 @@ class _RegisterPageState extends State<RegisterPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     final String? error = await _authService.register(
-      email: _emailController.text.trim(),
+      username: _usernameController.text.trim(),
       password: _passwordController.text,
+      email: _emailController.text.trim().isEmpty ? null : _emailController.text.trim(),
+      realName: _realNameController.text.trim(),
+      phone: _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
+      position: _positionController.text.trim().isEmpty ? null : _positionController.text.trim(),
     );
     setState(() => _isLoading = false);
     if (!mounted) return;
@@ -53,15 +65,51 @@ class _RegisterPageState extends State<RegisterPage> {
             child: Column(
               children: [
                 TextFormField(
+                  controller: _usernameController,
+                  decoration: const InputDecoration(
+                    labelText: '用户名',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (String? v) => (v == null || v.trim().isEmpty)
+                      ? '请输入用户名'
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _realNameController,
+                  decoration: const InputDecoration(
+                    labelText: '真实姓名',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (String? v) => (v == null || v.trim().isEmpty)
+                      ? '请输入真实姓名'
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
                   controller: _emailController,
                   decoration: const InputDecoration(
-                    labelText: '邮箱',
+                    labelText: '邮箱（可选）',
                     border: OutlineInputBorder(),
                   ),
                   keyboardType: TextInputType.emailAddress,
-                  validator: (String? v) => (v == null || v.trim().isEmpty)
-                      ? '请输入邮箱'
-                      : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _phoneController,
+                  decoration: const InputDecoration(
+                    labelText: '手机号（可选）',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.phone,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _positionController,
+                  decoration: const InputDecoration(
+                    labelText: '职位（可选）',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 16),
                 TextFormField(

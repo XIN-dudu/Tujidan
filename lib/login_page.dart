@@ -12,7 +12,7 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final AuthService _authService = AuthService();
   bool _isLoading = false;
@@ -20,7 +20,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
-    _emailController.dispose();
+    _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -29,7 +29,7 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     final String? error = await _authService.login(
-      email: _emailController.text.trim(),
+      username: _usernameController.text.trim(),
       password: _passwordController.text,
     );
     setState(() => _isLoading = false);
@@ -64,14 +64,13 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   children: [
                     TextFormField(
-                      controller: _emailController,
+                      controller: _usernameController,
                       decoration: const InputDecoration(
-                        labelText: '邮箱',
+                        labelText: '用户名或邮箱',
                         border: OutlineInputBorder(),
                       ),
-                      keyboardType: TextInputType.emailAddress,
                       validator: (String? v) => (v == null || v.trim().isEmpty)
-                          ? '请输入邮箱'
+                          ? '请输入用户名或邮箱'
                           : null,
                     ),
                     const SizedBox(height: 16),

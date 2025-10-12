@@ -48,15 +48,26 @@ class AuthService {
   }
 
   // 用户注册
-  Future<String?> register({required String email, required String password}) async {
+  Future<String?> register({
+    required String username,
+    required String password,
+    String? email,
+    required String realName,
+    String? phone,
+    String? position,
+  }) async {
     try {
       // 发送注册请求到后端，设置超时
       final response = await http.post(
         Uri.parse('$_baseUrl/register'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
-          'email': email,
+          'username': username,
           'password': password,
+          'email': email,
+          'realName': realName,
+          'phone': phone,
+          'position': position,
         }),
       ).timeout(const Duration(seconds: 30));
 
@@ -80,14 +91,14 @@ class AuthService {
   }
 
   // 用户登录
-  Future<String?> login({required String email, required String password}) async {
+  Future<String?> login({required String username, required String password}) async {
     try {
       // 发送登录请求到后端，设置超时
       final response = await http.post(
         Uri.parse('$_baseUrl/login'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
-          'email': email,
+          'username': username,
           'password': password,
         }),
       ).timeout(const Duration(seconds: 30));
