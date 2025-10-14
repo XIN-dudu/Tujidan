@@ -56,7 +56,8 @@ class LogService {
     final body = {
       'content': log.content,
       'priority': log.priority.name == 'medium' ? 'mid' : log.priority.name,
-      'timeFrom': log.time.toIso8601String(),
+      'timeFrom': (log.startTime ?? log.time).toIso8601String(),
+      'timeTo': log.endTime?.toIso8601String(),
       'taskId': log.taskId != null && log.taskId!.isNotEmpty
           ? int.tryParse(log.taskId!)
           : null,
@@ -73,7 +74,8 @@ class LogService {
     final body = {
       'content': log.content,
       'priority': log.priority.name == 'medium' ? 'mid' : log.priority.name,
-      'timeFrom': log.time.toIso8601String(),
+      'timeFrom': (log.startTime ?? log.time).toIso8601String(),
+      'timeTo': log.endTime?.toIso8601String(),
       'taskId': log.taskId != null && log.taskId!.isNotEmpty
           ? int.tryParse(log.taskId!)
           : null,

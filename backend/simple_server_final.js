@@ -636,7 +636,16 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
 // ---- Logs ----
 app.post('/api/logs', auth, async (req, res) => {
   try {
-    const { content, priority = 'low', progress = 0, timeFrom = null, timeTo = null, taskId = null, createNewTask = null, syncTaskProgress = false } = req.body;
+    const {
+      content,
+      priority = 'low',
+      progress = 0,
+      timeFrom = null,
+      timeTo = null,
+      taskId = null,
+      createNewTask = null,
+      syncTaskProgress = false,
+    } = req.body;
     if (!content || typeof content !== 'string') {
       return res.status(400).json({ success: false, message: '日志内容不能为空' });
     }
@@ -656,17 +665,12 @@ app.post('/api/logs', auth, async (req, res) => {
       finalTaskId = tRes.insertId;
     }
 
+    const startDt = toMySQLDateTime(timeFrom);
+    const endDt = toMySQLDateTime(timeTo);
+
     const [lRes] = await connection.execute(
       'INSERT INTO logs (author_user_id, content, priority, progress, time_from, time_to, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [
-        req.user.id,
-        content,
-        priority,
-        Math.min(Math.max(progress, 0), 100),
-        toMySQLDateTime(timeFrom),
-        toMySQLDateTime(timeTo),
-        finalTaskId,
-      ]
+      [req.user.id, content, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId]
     );
 
     if (syncTaskProgress && finalTaskId) {
@@ -690,7 +694,7 @@ app.post('/api/logs', auth, async (req, res) => {
 app.get('/api/logs', auth, async (req, res) => {
   try {
     const connection = await getConn();
-    const { type, q, startDate, endDate } = req.query;
+    const { type, q, startDate, endDate, startTime, endTime } = req.query;
 
     // 检查用户是否有查看所有日志的权限
     const hasViewAllPermission = await checkUserPermission(req.user.id, 'log:view_all');
@@ -704,10 +708,12 @@ app.get('/api/logs', auth, async (req, res) => {
       params.push(type);
     }
 
-    // 时间范围过滤
-    if (startDate && endDate) {
-      sql += ' AND created_at BETWEEN ? AND ?';
-      params.push(startDate, endDate);
+    // 时间范围过滤（优先使用 time_from；兼容 startTime/startDate 参数名）
+    const rangeStart = startTime || startDate;
+    const rangeEnd = endTime || endDate;
+    if (rangeStart && rangeEnd) {
+      sql += ' AND time_from BETWEEN ? AND ?';
+      params.push(rangeStart, rangeEnd);
     }
 
     // 搜索关键词过滤
@@ -728,16 +734,12 @@ app.get('/api/logs', auth, async (req, res) => {
       message: '获取日志成功',
       data: rows.map(row => ({
         id: row.id,
-        userId: row.author_user_id, // 修改这里
-        title: row.title,
+        userId: row.author_user_id,
         content: row.content,
-        logType: row.log_type,
         priority: row.priority,
-        logStatus: row.log_status,
-        startTime: row.start_time,
-        endTime: row.end_time,
-        totalHours: row.total_hours,
-        timeTag: row.time_tag,
+        // 关键修复：使用 time_from/time_to
+        startTime: row.time_from,
+        endTime: row.time_to,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         taskId: row.task_id,
@@ -795,15 +797,7 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: '日志不存在' });
     }
     const toNull = (v) => (v === undefined ? null : v);
-    const params = [
-      toNull(content),
-      toNull(priority),
-      toNull(progress),
-      toMySQLDateTime(timeFrom),
-      toMySQLDateTime(timeTo),
-      toNull(taskId),
-      id,
-    ];
+    const params = [toNull(content), toNull(priority), toNull(progress), toMySQLDateTime(timeFrom), toMySQLDateTime(timeTo), toNull(taskId), id];
     await connection.execute(
       'UPDATE logs SET content = COALESCE(?, content), priority = COALESCE(?, priority), progress = COALESCE(?, progress), time_from = COALESCE(?, time_from), time_to = COALESCE(?, time_to), task_id = COALESCE(?, task_id) WHERE id = ?',
       params

@@ -17,7 +17,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: '潘多拉',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        useMaterial3: true,
+        colorSchemeSeed: Colors.indigo,
+        scaffoldBackgroundColor: const Color(0xFFF6F6FA),
       ),
       home: const _RootDecider(),
     );
@@ -38,8 +40,8 @@ class _HomePageState extends State<HomePage> {
     const QuadrantPage(),
     const LogViewPage(),
     const LogListPage(),
-    const Center(child: Text('AI地图页面')),
-    const Center(child: Text('我的页面')),
+    const Center(child: Text('AI地图')),
+    const UserProfilePage(),
   ];
 
   void _onItemTapped(int index) {
@@ -51,51 +53,16 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_selectedIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.map),
-            label: '导图',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.view_module),
-            label: '视图',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.article),
-            label: '日志',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.location_on),
-            label: 'AI地图',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: '我的',
-          ),
-        ],
-        currentIndex: _selectedIndex,
-        selectedItemColor: Colors.blue,
-        unselectedItemColor: Colors.grey,
-        onTap: _onItemTapped,
-      ),
-      appBar: AppBar(
-        title: const Text('潘多拉'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await AuthService().logout();
-              if (!context.mounted) return;
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LoginPage()),
-                    (_) => false,
-              );
-            },
-            tooltip: '退出登录',
-          ),
+      body: SafeArea(child: _pages[_selectedIndex]),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: _onItemTapped,
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.map_outlined), selectedIcon: Icon(Icons.map), label: '导图'),
+          NavigationDestination(icon: Icon(Icons.view_module_outlined), selectedIcon: Icon(Icons.view_module), label: '视图'),
+          NavigationDestination(icon: Icon(Icons.article_outlined), selectedIcon: Icon(Icons.article), label: '日志'),
+          NavigationDestination(icon: Icon(Icons.explore_outlined), selectedIcon: Icon(Icons.explore), label: 'AI地图'),
+          NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: '我的'),
         ],
       ),
     );
@@ -107,73 +74,75 @@ class QuadrantPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tiles = [
+      _DashboardTile(icon: Icons.star, title: '收藏', start: Colors.pinkAccent, end: Colors.orangeAccent),
+      _DashboardTile(icon: Icons.favorite, title: '关注', start: Colors.lightBlueAccent, end: Colors.indigoAccent),
+      _DashboardTile(icon: Icons.shopping_cart, title: '待办', start: Colors.greenAccent, end: Colors.teal),
+      _DashboardTile(icon: Icons.settings, title: '设置', start: Colors.amberAccent, end: Colors.deepOrangeAccent),
+    ];
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('首页'),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: GridView.builder(
+            itemCount: tiles.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1,
+            ),
+            itemBuilder: (context, index) => tiles[index],
+          ),
+        ),
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.red[100],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Center(
-                      child: Icon(Icons.star, size: 50, color: Colors.red),
-                    ),
-                  ),
+    );
+  }
+}
+
+class _DashboardTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final Color start;
+  final Color end;
+
+  const _DashboardTile({required this.icon, required this.title, required this.start, required this.end});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {},
+      child: Ink(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(colors: [start.withOpacity(.8), end.withOpacity(.8)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          boxShadow: [
+            BoxShadow(color: end.withOpacity(.25), blurRadius: 12, offset: const Offset(0, 6)),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(.9),
+                  shape: BoxShape.circle,
                 ),
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[100],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Center(
-                      child: Icon(Icons.favorite, size: 50, color: Colors.blue),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+                child: Icon(icon, color: end, size: 28),
+              ),
+              const Spacer(),
+              Text(
+                title,
+                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ],
           ),
-          Expanded(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.green[100],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Center(
-                      child: Icon(Icons.shopping_cart, size: 50, color: Colors.green),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.orange[100],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Center(
-                      child: Icon(Icons.settings, size: 50, color: Colors.orange),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

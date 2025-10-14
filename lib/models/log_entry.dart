@@ -52,11 +52,16 @@ class LogEntry {
       content: (json['content'] ?? '').toString(),
       taskId: toNullableString(json['taskId'] ?? json['task_id']),
       priority: parsePriority(json['priority']),
-      time: parseTime(json['time'] ?? json['time_from'] ?? json['created_at']),
+      // 优先使用后端的开始时间，其次 time/time_from，最后才用 createdAt
+      time: parseTime(json['startTime'] ?? json['start_time'] ?? json['time'] ?? json['time_from'] ?? json['createdAt'] ?? json['created_at']),
       createdAt: parseTime(json['createdAt'] ?? json['created_at']),
       updatedAt: parseTime(json['updatedAt'] ?? json['updated_at']),
-      startTime: json['start_time'] != null ? parseTime(json['start_time']) : null,
-      endTime: json['end_time'] != null ? parseTime(json['end_time']) : null,
+      startTime: json['startTime'] != null
+          ? parseTime(json['startTime'])
+          : (json['start_time'] != null ? parseTime(json['start_time']) : null),
+      endTime: json['endTime'] != null
+          ? parseTime(json['endTime'])
+          : (json['end_time'] != null ? parseTime(json['end_time']) : null),
     );
   }
 
