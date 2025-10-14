@@ -23,6 +23,8 @@ class _LogEditPageState extends State<LogEditPage> {
   Task? _selectedTask;
   TaskPriority _selectedPriority = TaskPriority.low;
   DateTime _selectedTime = DateTime.now();
+  DateTime? _startTime = DateTime.now();
+  DateTime? _endTime;
   bool _isLoading = false;
   bool _isSaving = false;
 
@@ -39,6 +41,8 @@ class _LogEditPageState extends State<LogEditPage> {
     _contentController.text = log.content;
     _selectedPriority = log.priority;
     _selectedTime = log.time;
+    _startTime = log.startTime ?? log.time;
+    _endTime = log.endTime;
     
     // 如果有关联任务，需要获取任务详情
     if (log.taskId != null) {
@@ -86,6 +90,8 @@ class _LogEditPageState extends State<LogEditPage> {
         time: _selectedTime,
         createdAt: widget.logEntry?.createdAt ?? DateTime.now(),
         updatedAt: DateTime.now(),
+        startTime: _startTime,
+        endTime: _endTime,
       );
 
       ApiResponse<LogEntry> response;
@@ -248,34 +254,61 @@ class _LogEditPageState extends State<LogEditPage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // 时间选择
+                    // 开始时间
                     ListTile(
-                      title: const Text('时间'),
-                      subtitle: Text(
-                        '${_selectedTime.year}-${_selectedTime.month.toString().padLeft(2, '0')}-${_selectedTime.day.toString().padLeft(2, '0')} ${_selectedTime.hour.toString().padLeft(2, '0')}:${_selectedTime.minute.toString().padLeft(2, '0')}',
-                      ),
-                      trailing: const Icon(Icons.calendar_today),
+                      title: const Text('开始时间'),
+                      subtitle: Text(_startTime == null
+                          ? '未选择'
+                          : '${_startTime!.year}-${_startTime!.month.toString().padLeft(2, '0')}-${_startTime!.day.toString().padLeft(2, '0')} ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'),
+                      trailing: const Icon(Icons.schedule),
                       onTap: () async {
                         final date = await showDatePicker(
                           context: context,
-                          initialDate: _selectedTime,
+                          initialDate: _startTime ?? DateTime.now(),
                           firstDate: DateTime(2020),
-                          lastDate: DateTime(2030),
+                          lastDate: DateTime(2035),
                         );
                         if (date != null) {
                           final time = await showTimePicker(
                             context: context,
-                            initialTime: TimeOfDay.fromDateTime(_selectedTime),
+                            initialTime: TimeOfDay.fromDateTime(_startTime ?? DateTime.now()),
                           );
                           if (time != null) {
                             setState(() {
-                              _selectedTime = DateTime(
-                                date.year,
-                                date.month,
-                                date.day,
-                                time.hour,
-                                time.minute,
-                              );
+                              _startTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+                              if (_endTime != null && _endTime!.isBefore(_startTime!)) {
+                                _endTime = _startTime;
+                              }
+                            });
+                          }
+                        }
+                      },
+                    ),
+                    // 结束时间
+                    ListTile(
+                      title: const Text('结束时间'),
+                      subtitle: Text(_endTime == null
+                          ? '未选择'
+                          : '${_endTime!.year}-${_endTime!.month.toString().padLeft(2, '0')}-${_endTime!.day.toString().padLeft(2, '0')} ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'),
+                      trailing: const Icon(Icons.event),
+                      onTap: () async {
+                        final date = await showDatePicker(
+                          context: context,
+                          initialDate: _endTime ?? (_startTime ?? DateTime.now()),
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2035),
+                        );
+                        if (date != null) {
+                          final time = await showTimePicker(
+                            context: context,
+                            initialTime: TimeOfDay.fromDateTime(_endTime ?? (_startTime ?? DateTime.now())),
+                          );
+                          if (time != null) {
+                            setState(() {
+                              _endTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+                              if (_startTime != null && _endTime!.isBefore(_startTime!)) {
+                                _startTime = _endTime;
+                              }
                             });
                           }
                         }
