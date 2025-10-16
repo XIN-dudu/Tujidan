@@ -15,12 +15,14 @@ class LogViewPage extends StatefulWidget {
 class _LogViewPageState extends State<LogViewPage> {
   ViewType _currentView = ViewType.month;
   DateTime _currentDate = DateTime.now();
+  DateTime? _selectedDate; // 选中的日期
   List<LogEntry> _logs = [];
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
+    _selectedDate = DateTime.now(); // 默认选中今天
     _loadLogs();
   }
 
@@ -97,6 +99,27 @@ class _LogViewPageState extends State<LogViewPage> {
     _loadLogs();
   }
 
+  Future<void> _pickDate() async {
+    final initial = DateTime(_currentDate.year, _currentDate.month, _currentDate.day);
+    final first = DateTime(1900, 1, 1);
+    final last = DateTime(2100, 12, 31);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
+    );
+
+    if (picked != null) {
+      setState(() {
+        _currentDate = picked;
+        _selectedDate = picked;
+      });
+      _loadLogs();
+    }
+  }
+
+
   String _getViewTitle() {
     switch (_currentView) {
       case ViewType.month:
@@ -126,7 +149,17 @@ class _LogViewPageState extends State<LogViewPage> {
     return Scaffold(
       backgroundColor: Colors.purple[50],
       appBar: AppBar(
-        title: Text(_getViewTitle()),
+        title: GestureDetector(
+          onTap: _pickDate,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_getViewTitle()),
+              const SizedBox(width: 6),
+              const Icon(Icons.keyboard_arrow_down, size: 20),
+            ],
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -135,54 +168,54 @@ class _LogViewPageState extends State<LogViewPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // 视图切换和日期导航
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                // 视图切换按钮
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildViewButton('月视图', ViewType.month, Icons.calendar_month),
-                    _buildViewButton('周视图', ViewType.week, Icons.view_week),
-                    _buildViewButton('日视图', ViewType.day, Icons.today),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                // 日期导航
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.chevron_left),
-                      onPressed: () => _navigateDate(-1),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              child: Column(
+                children: [
+                  // 视图切换和日期导航
+                  Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        // 视图切换按钮
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _buildViewButton('月视图', ViewType.month, Icons.calendar_month),
+                            _buildViewButton('周视图', ViewType.week, Icons.view_week),
+                            _buildViewButton('日视图', ViewType.day, Icons.today),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        // 日期导航
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.chevron_left),
+                              onPressed: () => _navigateDate(-1),
+                            ),
+                            Text(
+                              _getViewTitle(),
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.chevron_right),
+                              onPressed: () => _navigateDate(1),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    Text(
-                      _getViewTitle(),
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right),
-                      onPressed: () => _navigateDate(1),
-                    ),
-                  ],
-                ),
-              ],
+                  ),
+                  
+                  // 内容区域
+                  _buildViewContent(),
+                ],
+              ),
             ),
-          ),
-          
-          // 内容区域
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _buildViewContent(),
-          ),
-        ],
-      ),
     );
   }
 
@@ -258,16 +291,25 @@ class _LogViewPageState extends State<LogViewPage> {
       calendarCells.add(_buildCalendarCell(day, dayLogs, date));
     }
     
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 7,
-        childAspectRatio: 1.2,
-        crossAxisSpacing: 4,
-        mainAxisSpacing: 4,
-      ),
-      itemCount: calendarCells.length,
-      itemBuilder: (context, index) => calendarCells[index],
+    return Column(
+      children: [
+        // 日历网格
+        GridView.builder(
+          padding: const EdgeInsets.all(16),
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            childAspectRatio: 1.2,
+            crossAxisSpacing: 4,
+            mainAxisSpacing: 4,
+          ),
+          itemCount: calendarCells.length,
+          itemBuilder: (context, index) => calendarCells[index],
+        ),
+        // 选中日期的日志详情
+        _buildSelectedDateLogs(),
+      ],
     );
   }
 
@@ -275,61 +317,95 @@ class _LogViewPageState extends State<LogViewPage> {
     final isToday = date.day == DateTime.now().day && 
                    date.month == DateTime.now().month && 
                    date.year == DateTime.now().year;
+    final isSelected = _selectedDate != null &&
+                      _selectedDate!.day == date.day &&
+                      _selectedDate!.month == date.month &&
+                      _selectedDate!.year == date.year;
     
-    return Container(
-      decoration: BoxDecoration(
-        color: isToday ? Theme.of(context).colorScheme.primary.withOpacity(0.1) : Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isToday ? Theme.of(context).colorScheme.primary : Colors.grey[300]!,
-          width: isToday ? 2 : 1,
-        ),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(4),
-            child: Text(
-              day.toString(),
-              style: TextStyle(
-                fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
-                color: isToday ? Theme.of(context).colorScheme.primary : Colors.black87,
-              ),
-            ),
+    // 获取该日期的最高优先级日志
+    TaskPriority? highestPriority;
+    if (dayLogs.isNotEmpty) {
+      highestPriority = dayLogs.map((log) => log.priority).reduce((a, b) {
+        if (a == TaskPriority.high || b == TaskPriority.high) return TaskPriority.high;
+        if (a == TaskPriority.medium || b == TaskPriority.medium) return TaskPriority.medium;
+        return TaskPriority.low;
+      });
+    }
+    
+    // 定义不同的样式
+    Color backgroundColor;
+    Color borderColor;
+    double borderWidth;
+    FontWeight fontWeight;
+    Color textColor;
+    
+    if (isSelected) {
+      // 选中状态：明显的主题色
+      backgroundColor = Theme.of(context).colorScheme.primary.withOpacity(0.2);
+      borderColor = Theme.of(context).colorScheme.primary;
+      borderWidth = 2;
+      fontWeight = FontWeight.bold;
+      textColor = Theme.of(context).colorScheme.primary;
+    } else if (isToday && _selectedDate == null) {
+      // 今天状态：只有在没有选中其他日期时才高亮
+      backgroundColor = Theme.of(context).colorScheme.primary.withOpacity(0.1);
+      borderColor = Theme.of(context).colorScheme.primary;
+      borderWidth = 2;
+      fontWeight = FontWeight.bold;
+      textColor = Theme.of(context).colorScheme.primary;
+    } else {
+      // 普通状态
+      backgroundColor = Colors.white;
+      borderColor = Colors.grey[300]!;
+      borderWidth = 1;
+      fontWeight = FontWeight.normal;
+      textColor = Colors.black87;
+    }
+    
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedDate = date;
+        });
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: borderColor,
+            width: borderWidth,
           ),
-          if (dayLogs.isNotEmpty) ...[
-            Expanded(
-              child: ListView.builder(
-                itemCount: dayLogs.length > 3 ? 3 : dayLogs.length,
-                itemBuilder: (context, index) {
-                  final log = dayLogs[index];
-                  return Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: _getPriorityColor(log.priority).withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      log.content,
-                      style: const TextStyle(fontSize: 10),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  );
-                },
+        ),
+        child: Stack(
+          children: [
+            // 日期数字
+            Center(
+              child: Text(
+                day.toString(),
+                style: TextStyle(
+                  fontWeight: fontWeight,
+                  color: textColor,
+                  fontSize: 16,
+                ),
               ),
             ),
-            if (dayLogs.length > 3)
-              Text(
-                '+${dayLogs.length - 3}',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.grey[600],
+            // 优先级圆点 - 固定在右下角
+            if (highestPriority != null)
+              Positioned(
+                bottom: 4,
+                right: 4,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: _getPriorityColor(highestPriority),
+                    shape: BoxShape.circle,
+                  ),
                 ),
               ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -338,11 +414,8 @@ class _LogViewPageState extends State<LogViewPage> {
     final weekStart = _currentDate.subtract(Duration(days: _currentDate.weekday - 1));
     final weekDays = List.generate(7, (index) => weekStart.add(Duration(days: index)));
     
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: 7,
-      itemBuilder: (context, index) {
-        final day = weekDays[index];
+    return Column(
+      children: weekDays.map((day) {
         final dayLogs = _logs.where((log) => 
           log.time.year == day.year && 
           log.time.month == day.month && 
@@ -350,7 +423,7 @@ class _LogViewPageState extends State<LogViewPage> {
         ).toList();
         
         return _buildWeekDayCard(day, dayLogs);
-      },
+      }).toList(),
     );
   }
 
@@ -436,13 +509,8 @@ class _LogViewPageState extends State<LogViewPage> {
       );
     }
     
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: dayLogs.length,
-      itemBuilder: (context, index) {
-        final log = dayLogs[index];
-        return _buildLogItem(log);
-      },
+    return Column(
+      children: dayLogs.map((log) => _buildLogItem(log)).toList(),
     );
   }
 
@@ -501,5 +569,153 @@ class _LogViewPageState extends State<LogViewPage> {
   String _getWeekdayName(int weekday) {
     const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     return weekdays[weekday - 1];
+  }
+
+  Widget _buildSelectedDateLogs() {
+
+    final selectedDateLogs = _logs.where((log) => 
+      log.time.year == _selectedDate!.year && 
+      log.time.month == _selectedDate!.month && 
+      log.time.day == _selectedDate!.day
+    ).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(16),
+          topRight: Radius.circular(16),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 选中日期标题
+          Row(
+            children: [
+              Icon(Icons.calendar_today, size: 20, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                '${_selectedDate!.year}年${_selectedDate!.month}月${_selectedDate!.day}日',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${selectedDateLogs.length}条日志',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // 日志列表
+          selectedDateLogs.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.article_outlined, size: 48, color: Colors.grey),
+                      SizedBox(height: 8),
+                      Text(
+                        '该日期暂无日志',
+                        style: TextStyle(fontSize: 16, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+              : Column(
+                  children: selectedDateLogs.map((log) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _getPriorityColor(log.priority).withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 4,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: _getPriorityColor(log.priority),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  log.content,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${log.time.hour.toString().padLeft(2, '0')}:${log.time.minute.toString().padLeft(2, '0')}',
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Icon(Icons.flag, size: 14, color: _getPriorityColor(log.priority)),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      log.priority.displayName,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: _getPriorityColor(log.priority),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+        ],
+      ),
+    );
   }
 }
