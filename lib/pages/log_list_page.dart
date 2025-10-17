@@ -82,7 +82,6 @@ class _LogListPageState extends State<LogListPage> {
     }
   }
 
-
   String _formatDateTime(DateTime dateTime) {
     return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} '
         '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
@@ -253,258 +252,94 @@ class _LogListPageState extends State<LogListPage> {
               itemCount: _logs.length,
               itemBuilder: (context, index) {
                 final log = _logs[index];
-                return Dismissible(
-                  key: Key(log.id),
-                  direction: DismissDirection.endToStart,
-                   background: Container(
-                     margin: const EdgeInsets.only(bottom: 12.0),
-                     alignment: Alignment.centerRight,
-                     padding: const EdgeInsets.only(right: 20),
-                     decoration: BoxDecoration(
-                       gradient: LinearGradient(
-                         colors: [Colors.red[400]!, Colors.red[600]!],
-                         begin: Alignment.centerLeft,
-                         end: Alignment.centerRight,
-                       ),
-                       borderRadius: BorderRadius.circular(14),
-                     ),
-                     child: const Column(
-                       mainAxisAlignment: MainAxisAlignment.center,
-                       children: [
-                         Icon(
-                           Icons.delete_forever,
-                           color: Colors.white,
-                           size: 32,
-                         ),
-                         SizedBox(height: 6),
-                         Text(
-                           '删除',
-                           style: TextStyle(
-                             color: Colors.white,
-                             fontSize: 14,
-                             fontWeight: FontWeight.bold,
-                             letterSpacing: 0.5,
-                           ),
-                         ),
-                       ],
-                     ),
-                   ),
-                  confirmDismiss: (direction) async {
-                    // 显示确认对话框
-                    final confirmed = await showDialog<bool>(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        title: Row(
-                          children: [
-                            Icon(Icons.warning_amber_rounded, 
-                                 color: Colors.orange[600], size: 24),
-                            const SizedBox(width: 8),
-                            const Text('删除日志'),
-                          ],
-                        ),
-                        content: const Text(
-                          '确定要删除这条日志吗？\n此操作无法撤销。',
-                          style: TextStyle(fontSize: 16),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.grey[600],
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                            ),
-                            child: const Text('取消'),
-                          ),
-                          ElevatedButton(
-                            onPressed: () => Navigator.of(context).pop(true),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red[600],
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            child: const Text('删除'),
-                          ),
-                        ],
-                      ),
-                    );
-                    return confirmed ?? false;
-                  },
-                  onDismissed: (direction) async {
-                    // 执行删除操作
-                    try {
-                      final response = await LogService.deleteLog(log.id);
-                      if (response.success) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Row(
-                                children: [
-                                  Icon(Icons.check_circle, color: Colors.white),
-                                  const SizedBox(width: 8),
-                                  const Text('日志删除成功'),
-                                ],
-                              ),
-                              backgroundColor: Colors.green[600],
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      } else {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Row(
-                                children: [
-                                  Icon(Icons.error, color: Colors.white),
-                                  const SizedBox(width: 8),
-                                  Expanded(child: Text('删除失败: ${response.message}')),
-                                ],
-                              ),
-                              backgroundColor: Colors.red[600],
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              duration: const Duration(seconds: 3),
-                            ),
-                          );
-                        }
-                        // 如果删除失败，重新加载列表
-                        _loadLogs(
-                          keyword: _searchQuery,
-                          type: _selectedType,
-                          startTime: _startTime,
-                          endTime: _endTime,
-                        );
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Row(
-                              children: [
-                                Icon(Icons.error, color: Colors.white),
-                                const SizedBox(width: 8),
-                                Expanded(child: Text('删除失败: $e')),
-                              ],
-                            ),
-                            backgroundColor: Colors.red[600],
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
+                return Card(
+                  color: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  margin: const EdgeInsets.only(bottom: 12.0),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => _navigateToEditLog(log),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: _getPriorityColor(log.priority)
+                                  .withOpacity(0.15),
                               borderRadius: BorderRadius.circular(10),
                             ),
-                            duration: const Duration(seconds: 3),
+                            child: Icon(Icons.article,
+                                color: _getPriorityColor(log.priority)),
                           ),
-                        );
-                      }
-                      // 如果删除失败，重新加载列表
-                      _loadLogs(
-                        keyword: _searchQuery,
-                        type: _selectedType,
-                        startTime: _startTime,
-                        endTime: _endTime,
-                      );
-                    }
-                  },
-                  child: Card(
-                    color: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    margin: const EdgeInsets.only(bottom: 12.0),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () => _navigateToEditLog(log),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 36,
-                              height: 36,
-                              decoration: BoxDecoration(
-                                color: _getPriorityColor(log.priority)
-                                    .withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Icon(Icons.article,
-                                  color: _getPriorityColor(log.priority)),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    log.content,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w500),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Icon(Icons.schedule,
-                                          size: 16,
-                                          color: Colors.grey[600]),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        _formatDateTime(log.time),
-                                        style: TextStyle(
-                                            fontSize: 12,
-                                            color: Colors.grey[600]),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Icon(Icons.flag,
-                                          size: 16,
-                                          color:
-                                          _getPriorityColor(log.priority)),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        log.priority.displayName,
-                                        style: TextStyle(
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  log.content,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500),
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Icon(Icons.schedule,
+                                        size: 16,
+                                        color: Colors.grey[600]),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _formatDateTime(log.time),
+                                      style: TextStyle(
                                           fontSize: 12,
-                                          color: _getPriorityColor(
-                                              log.priority),
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                          color: Colors.grey[600]),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    Icon(Icons.flag,
+                                        size: 16,
+                                        color:
+                                        _getPriorityColor(log.priority)),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      log.priority.displayName,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: _getPriorityColor(
+                                            log.priority),
+                                        fontWeight: FontWeight.bold,
                                       ),
-                                      if (log.taskId != null) ...[
-                                        const SizedBox(width: 16),
-                                        Icon(Icons.task_alt,
-                                            size: 16, color: Colors.blue[600]),
-                                        const SizedBox(width: 4),
-                                        Text('已关联任务',
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.blue[600])),
-                                      ],
+                                    ),
+                                    if (log.taskId != null) ...[
+                                      const SizedBox(width: 16),
+                                      Icon(Icons.task_alt,
+                                          size: 16, color: Colors.blue[600]),
+                                      const SizedBox(width: 4),
+                                      Text('已关联任务',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.blue[600])),
                                     ],
-                                  ),
-                                ],
-                              ),
+                                  ],
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            const Icon(Icons.chevron_right,
-                                color: Colors.grey, size: 20),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.chevron_right,
+                              color: Colors.grey, size: 20),
+                        ],
                       ),
                     ),
                   ),
