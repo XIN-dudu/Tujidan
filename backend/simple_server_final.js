@@ -693,14 +693,17 @@ app.post('/api/logs', auth, async (req, res) => {
 
 app.get('/api/logs', auth, async (req, res) => {
   try {
+    console.log('📋 收到日志查询请求:', req.query);
+    console.log('👤 当前用户:', req.user);
+    
     const connection = await getConn();
     const { type, q, startDate, endDate, startTime, endTime } = req.query;
 
-    // 检查用户是否有查看所有日志的权限
-    const hasViewAllPermission = await checkUserPermission(req.user.id, 'log:view_all');
+    // 日志始终只显示当前用户自己的
+    console.log('🔐 权限策略: 仅显示用户自己的日志');
     
-    const params = hasViewAllPermission ? [] : [req.user.id];
-    let sql = hasViewAllPermission ? 'SELECT * FROM logs' : 'SELECT * FROM logs WHERE author_user_id = ?';
+    const params = [req.user.id];
+    let sql = 'SELECT * FROM logs WHERE author_user_id = ?';
 
     // 类型过滤
     if (type && ['work', 'study', 'life', 'other'].includes(type)) {
@@ -714,6 +717,7 @@ app.get('/api/logs', auth, async (req, res) => {
     if (rangeStart && rangeEnd) {
       sql += ' AND time_from BETWEEN ? AND ?';
       params.push(rangeStart, rangeEnd);
+      console.log('📅 时间范围:', rangeStart, '至', rangeEnd);
     }
 
     // 搜索关键词过滤
@@ -725,8 +729,13 @@ app.get('/api/logs', auth, async (req, res) => {
     // 时间倒序，限制100条
     sql += ' ORDER BY created_at DESC LIMIT 100';
 
+    console.log('🔍 执行SQL:', sql);
+    console.log('📝 参数:', params);
+
     const [rows] = await connection.execute(sql, params);
     await connection.end();
+
+    console.log(`✅ 查询成功，找到 ${rows.length} 条日志`);
 
     // 返回前端固定结构
     res.json({
@@ -747,8 +756,8 @@ app.get('/api/logs', auth, async (req, res) => {
       code: 200,
     });
   } catch (e) {
-    console.error('查询日志失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误', code: 500 });
+    console.error('❌ 查询日志失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message, code: 500 });
   }
 });
 

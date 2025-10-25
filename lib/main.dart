@@ -83,17 +83,32 @@ class QuadrantPage extends StatelessWidget {
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: GridView.builder(
-            itemCount: tiles.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 1,
+        child: Center(
+          child: ConstrainedBox(
+            // 限制最大宽度和高度，保持四宫格比例
+            constraints: const BoxConstraints(
+              maxWidth: 600,  // 最大宽度
+              maxHeight: 650, // 最大高度（稍大一点以适应间距）
             ),
-            itemBuilder: (context, index) => tiles[index],
+            child: AspectRatio(
+              // 保持接近正方形的比例
+              aspectRatio: 1.0,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: GridView.builder(
+                  physics: const NeverScrollableScrollPhysics(), // 禁止滚动
+                  shrinkWrap: true, // 收缩包裹内容
+                  itemCount: tiles.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 1,
+                  ),
+                  itemBuilder: (context, index) => tiles[index],
+                ),
+              ),
+            ),
           ),
         ),
       ),

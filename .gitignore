@@ -42,6 +42,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/gradle/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+*.apk
+*.aab
 
 # iOS related
 **/ios/**/*.mode1v3
@@ -138,6 +145,12 @@ backend/.env.development.local
 backend/.env.test.local
 backend/.env.production.local
 
+# Control_web related (独立的网页管理端)
+Control_web/node_modules/
+Control_web/.env
+Control_web/.env.local
+Control_web/package-lock.json
+
 # Logs
 logs
 *.log
@@ -187,3 +200,27 @@ jspm_packages/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Build cache and generated files
+/build/
+*.cache
+*.dill
+*.track.dill
+.last_build_id
+
+# Temporary files
+*~
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# Database files (if any local testing)
+*.db
+*.sqlite
+*.sqlite3
+
+# Package locks (可选，如果团队需要锁定版本可以注释掉)
+# package-lock.json
+# yarn.lock

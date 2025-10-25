@@ -1,0 +1,24 @@
+{
+  "name": "control-web",
+  "version": "1.0.0",
+  "description": "Tujidan Control Web Backend",
+  "main": "backend/admin-server.js",
+  "scripts": {
+    "start": "node backend/admin-server.js",
+    "dev": "nodemon backend/admin-server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "mysql2": "^3.6.5",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
+

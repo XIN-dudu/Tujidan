@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>潘多拉管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .sidebar {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .sidebar .nav-link {
+            color: rgba(255,255,255,0.8);
+            border-radius: 8px;
+            margin: 2px 0;
+            transition: all 0.3s;
+        }
+        .sidebar .nav-link:hover, .sidebar .nav-link.active {
+            color: white;
+            background: rgba(255,255,255,0.2);
+            transform: translateX(5px);
+        }
+        .main-content {
+            background-color: #f8f9fa;
+            min-height: 100vh;
+        }
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 8px;
+        }
+        .table {
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .badge {
+            border-radius: 20px;
+            padding: 8px 12px;
+        }
+        .loading {
+            display: none;
+        }
+        .page-section {
+            display: none;
+        }
+        .page-section.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- 侧边栏 -->
+            <div class="col-md-3 col-lg-2 sidebar p-0">
+                <div class="p-3">
+                    <h4 class="text-white mb-4">
+                        <i class="bi bi-gear-fill me-2"></i>
+                        图记单管理
+                    </h4>
+                    <nav class="nav flex-column">
+                        <a class="nav-link" href="#" onclick="showPage('dashboard')">
+                            <i class="bi bi-speedometer2 me-2"></i>仪表盘
+                        </a>
+                        <a class="nav-link" href="#" onclick="showPage('users')">
+                            <i class="bi bi-people me-2"></i>用户管理
+                        </a>
+                        <a class="nav-link" href="#" onclick="showPage('roles')">
+                            <i class="bi bi-shield-check me-2"></i>角色管理
+                        </a>
+                        <a class="nav-link" href="#" onclick="showPage('permissions')">
+                            <i class="bi bi-key me-2"></i>权限管理
+                        </a>
+                        <a class="nav-link" href="#" onclick="showPage('tasks')">
+                            <i class="bi bi-list-task me-2"></i>任务管理
+                        </a>
+                        <a class="nav-link" href="#" onclick="showPage('logs')">
+                            <i class="bi bi-journal-text me-2"></i>日志管理
+                        </a>
+                    </nav>
+                </div>
+            </div>
+
+            <!-- 主内容区 -->
+            <div class="col-md-9 col-lg-10 main-content">
+                <div class="p-4">
+                    <!-- 顶部导航 -->
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h2 id="page-title">仪表盘</h2>
+                        <div class="d-flex align-items-center">
+                            <span class="me-3">欢迎，<span id="current-user">管理员</span></span>
+                            <button class="btn btn-outline-danger btn-sm" onclick="logout()">
+                                <i class="bi bi-box-arrow-right me-1"></i>退出
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 仪表盘页面 -->
+                    <div id="dashboard" class="page-section active">
+                        <div class="row mb-4">
+                            <div class="col-md-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <i class="bi bi-people text-primary" style="font-size: 2rem;"></i>
+                                        <h5 class="mt-2">总用户数</h5>
+                                        <h3 id="total-users">-</h3>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <i class="bi bi-list-task text-success" style="font-size: 2rem;"></i>
+                                        <h5 class="mt-2">总任务数</h5>
+                                        <h3 id="total-tasks">-</h3>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <i class="bi bi-journal-text text-warning" style="font-size: 2rem;"></i>
+                                        <h5 class="mt-2">总日志数</h5>
+                                        <h3 id="total-logs">-</h3>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <i class="bi bi-shield-check text-info" style="font-size: 2rem;"></i>
+                                        <h5 class="mt-2">角色数量</h5>
+                                        <h3 id="total-roles">-</h3>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 用户管理页面 -->
+                    <div id="users" class="page-section">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>用户管理</h4>
+                            <button class="btn btn-primary" onclick="showUserModal()">
+                                <i class="bi bi-plus-circle me-1"></i>添加用户
+                            </button>
+                        </div>
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>用户名</th>
+                                                <th>真实姓名</th>
+                                                <th>邮箱</th>
+                                                <th>职位</th>
+                                                <th>角色</th>
+                                                <th>状态</th>
+                                                <th>操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="users-table">
+                                            <tr>
+                                                <td colspan="7" class="text-center">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 角色管理页面 -->
+                    <div id="roles" class="page-section">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>角色管理</h4>
+                            <button class="btn btn-primary" onclick="showRoleModal()">
+                                <i class="bi bi-plus-circle me-1"></i>添加角色
+                            </button>
+                        </div>
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>角色名称</th>
+                                                <th>描述</th>
+                                                <th>用户数量</th>
+                                                <th>创建时间</th>
+                                                <th>操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="roles-table">
+                                            <tr>
+                                                <td colspan="5" class="text-center">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 权限管理页面 -->
+                    <div id="permissions" class="page-section">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>权限管理</h4>
+                            <button class="btn btn-primary" onclick="showPermissionModal()">
+                                <i class="bi bi-plus-circle me-1"></i>添加权限
+                            </button>
+                        </div>
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>权限名称</th>
+                                                <th>权限键</th>
+                                                <th>模块</th>
+                                                <th>描述</th>
+                                                <th>操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="permissions-table">
+                                            <tr>
+                                                <td colspan="5" class="text-center">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 任务管理页面 -->
+                    <div id="tasks" class="page-section">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>任务管理</h4>
+                        </div>
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>任务名称</th>
+                                                <th>优先级</th>
+                                                <th>进度</th>
+                                                <th>负责人</th>
+                                                <th>截止时间</th>
+                                                <th>状态</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tasks-table">
+                                            <tr>
+                                                <td colspan="6" class="text-center">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 日志管理页面 -->
+                    <div id="logs" class="page-section">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h4>日志管理</h4>
+                        </div>
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>内容</th>
+                                                <th>优先级</th>
+                                                <th>作者</th>
+                                                <th>时间</th>
+                                                <th>关联任务</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="logs-table">
+                                            <tr>
+                                                <td colspan="5" class="text-center">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 用户编辑模态框 -->
+    <div class="modal fade" id="userModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="userModalTitle">添加用户</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="userForm">
+                        <div class="mb-3">
+                            <label class="form-label">用户名</label>
+                            <input type="text" class="form-control" id="username" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">密码</label>
+                            <input type="password" class="form-control" id="password" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">真实姓名</label>
+                            <input type="text" class="form-control" id="realName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">邮箱</label>
+                            <input type="email" class="form-control" id="email">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">电话</label>
+                            <input type="tel" class="form-control" id="phone">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">职位</label>
+                            <input type="text" class="form-control" id="position">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">角色</label>
+                            <select class="form-select" id="userRoles" multiple>
+                                <!-- 动态加载角色选项 -->
+                            </select>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveUser()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 角色编辑模态框 -->
+    <div class="modal fade" id="roleModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="roleModalTitle">添加角色</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="roleForm">
+                        <div class="mb-3">
+                            <label class="form-label">角色名称</label>
+                            <input type="text" class="form-control" id="roleName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">描述</label>
+                            <textarea class="form-control" id="roleDescription" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">权限</label>
+                            <div id="permissions-list">
+                                <!-- 动态加载权限选项 -->
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveRole()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 权限编辑模态框 -->
+    <div class="modal fade" id="permissionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="permissionModalTitle">添加权限</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="permissionForm">
+                        <div class="mb-3">
+                            <label class="form-label">权限键</label>
+                            <input type="text" class="form-control" id="permKey" placeholder="例如: user:create" required>
+                            <small class="text-muted">格式：模块:操作，例如 user:create, role:edit</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">权限名称</label>
+                            <input type="text" class="form-control" id="permName" placeholder="例如: 创建用户" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">模块</label>
+                            <select class="form-select" id="permModule" required>
+                                <option value="">请选择模块</option>
+                                <option value="user_management">用户管理</option>
+                                <option value="role_management">角色管理</option>
+                                <option value="task_management">任务管理</option>
+                                <option value="log_management">日志管理</option>
+                                <option value="system_management">系统管理</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">描述</label>
+                            <textarea class="form-control" id="permDescription" rows="2" placeholder="权限的详细描述"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="savePermission()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
