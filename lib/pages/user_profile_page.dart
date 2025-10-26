@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/user_service.dart';
+import '../auth_service.dart';
+import '../login_page.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -50,6 +52,38 @@ class _UserProfilePageState extends State<UserProfilePage> {
     }
   }
 
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认退出'),
+        content: const Text('确定要退出登录吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('退出'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      final authService = AuthService();
+      await authService.logout();
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginPage()),
+          (route) => false,
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -60,6 +94,11 @@ class _UserProfilePageState extends State<UserProfilePage> {
             icon: const Icon(Icons.refresh),
             onPressed: _loadUserData,
             tooltip: '刷新',
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
+            tooltip: '退出登录',
           ),
         ],
       ),
@@ -78,10 +117,29 @@ class _UserProfilePageState extends State<UserProfilePage> {
                     _buildRolesCard(),
                     const SizedBox(height: 16),
                     _buildPermissionsCard(),
+                    const SizedBox(height: 24),
+                    _buildLogoutButton(),
                   ],
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _buildLogoutButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: _logout,
+        icon: const Icon(Icons.logout),
+        label: const Text('退出登录'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.red[50],
+          foregroundColor: Colors.red[700],
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          elevation: 0,
+        ),
+      ),
     );
   }
 
