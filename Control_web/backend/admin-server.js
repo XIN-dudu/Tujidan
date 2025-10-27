@@ -101,6 +101,72 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// 注册/创建用户接口
+app.post('/api/register', auth, async (req, res) => {
+  try {
+    const { username, password, email, realName, phone, position } = req.body;
+    
+    console.log('创建用户请求:', { username, realName, email });
+
+    // 验证必填字段
+    if (!username || !password || !realName) {
+      return res.status(400).json({ 
+        success: false, 
+        message: '用户名、密码和真实姓名不能为空' 
+      });
+    }
+
+    const connection = await getConn();
+
+    // 检查用户名是否已存在
+    const [existing] = await connection.execute(
+      'SELECT id FROM users WHERE username = ?',
+      [username]
+    );
+
+    if (existing.length > 0) {
+      await connection.end();
+      return res.status(409).json({ 
+        success: false, 
+        message: '用户名已存在' 
+      });
+    }
+
+    // 加密密码
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 插入新用户
+    const [result] = await connection.execute(
+      'INSERT INTO users (username, password_hash, email, real_name, phone, position, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, NOW())',
+      [username, hashedPassword, email || null, realName, phone || null, position || null]
+    );
+
+    await connection.end();
+
+    console.log('用户创建成功:', username, 'ID:', result.insertId);
+
+    res.status(201).json({
+      success: true,
+      message: '用户创建成功',
+      user: {
+        id: result.insertId,
+        username,
+        email,
+        realName,
+        phone,
+        position
+      }
+    });
+
+  } catch (error) {
+    console.error('创建用户失败:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: '服务器内部错误: ' + error.message 
+    });
+  }
+});
+
 // 登录接口（复用主后端的逻辑）
 app.post('/api/login', async (req, res) => {
   try {
@@ -651,6 +717,198 @@ app.delete('/api/permissions/:id', auth, checkPermission('role:view'), async (re
     res.json({ success: true, message: '权限删除成功' });
   } catch (e) {
     console.error('删除权限失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 获取角色的权限（用于编辑角色）
+app.get('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), async (req, res) => {
+  try {
+    const roleId = parseInt(req.params.roleId, 10);
+    const connection = await getConn();
+    
+    const [permissions] = await connection.execute(`
+      SELECT p.id, p.perm_key, p.name, p.module, p.description
+      FROM permissions p
+      JOIN role_permissions rp ON p.id = rp.permission_id
+      WHERE rp.role_id = ?
+      ORDER BY p.module, p.perm_key
+    `, [roleId]);
+    
+    await connection.end();
+    res.json({ success: true, permissions });
+  } catch (e) {
+    console.error('获取角色权限失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+// 创建角色
+app.post('/api/roles', auth, checkPermission('role:view'), async (req, res) => {
+  try {
+    const { roleName, description } = req.body;
+    
+    if (!roleName) {
+      return res.status(400).json({ success: false, message: '角色名称不能为空' });
+    }
+    
+    const connection = await getConn();
+    
+    const [result] = await connection.execute(
+      'INSERT INTO roles (role_name, description, created_at) VALUES (?, ?, NOW())',
+      [roleName, description || null]
+    );
+    
+    await connection.end();
+    
+    res.json({ 
+      success: true, 
+      message: '角色创建成功',
+      role: {
+        id: result.insertId,
+        role_name: roleName,
+        description
+      }
+    });
+  } catch (e) {
+    console.error('创建角色失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 更新角色
+app.put('/api/roles/:id', auth, checkPermission('role:view'), async (req, res) => {
+  try {
+    const roleId = parseInt(req.params.id, 10);
+    const { roleName, description } = req.body;
+    
+    const connection = await getConn();
+    
+    await connection.execute(
+      'UPDATE roles SET role_name = ?, description = ? WHERE id = ?',
+      [roleName, description, roleId]
+    );
+    
+    await connection.end();
+    
+    res.json({ success: true, message: '角色更新成功' });
+  } catch (e) {
+    console.error('更新角色失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 删除角色
+app.delete('/api/roles/:id', auth, checkPermission('role:view'), async (req, res) => {
+  try {
+    const roleId = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    
+    // 先删除角色权限关联
+    await connection.execute('DELETE FROM role_permissions WHERE role_id = ?', [roleId]);
+    
+    // 删除用户角色关联
+    await connection.execute('DELETE FROM user_roles WHERE role_id = ?', [roleId]);
+    
+    // 删除角色
+    await connection.execute('DELETE FROM roles WHERE id = ?', [roleId]);
+    
+    await connection.end();
+    
+    res.json({ success: true, message: '角色删除成功' });
+  } catch (e) {
+    console.error('删除角色失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 为角色分配权限
+app.post('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), async (req, res) => {
+  try {
+    const roleId = parseInt(req.params.roleId, 10);
+    const { permissionIds } = req.body;
+    
+    if (!Array.isArray(permissionIds)) {
+      return res.status(400).json({ success: false, message: '权限ID列表格式错误' });
+    }
+    
+    const connection = await getConn();
+    
+    // 删除角色现有权限
+    await connection.execute('DELETE FROM role_permissions WHERE role_id = ?', [roleId]);
+    
+    // 添加新权限
+    for (const permissionId of permissionIds) {
+      await connection.execute(
+        'INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
+        [roleId, permissionId]
+      );
+    }
+    
+    await connection.end();
+    res.json({ success: true, message: '权限分配成功' });
+  } catch (e) {
+    console.error('分配权限失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 获取日志列表
+app.get('/api/logs', auth, async (req, res) => {
+  try {
+    const connection = await getConn();
+    
+    // 管理端可以查看所有日志，但限制数量
+    const [logs] = await connection.execute(`
+      SELECT l.*, u.username, u.real_name
+      FROM logs l
+      LEFT JOIN users u ON l.author_user_id = u.id
+      ORDER BY l.created_at DESC
+      LIMIT 100
+    `);
+    
+    await connection.end();
+    
+    res.json({ 
+      success: true, 
+      data: logs.map(log => ({
+        id: log.id,
+        content: log.content,
+        priority: log.priority,
+        userId: log.author_user_id,
+        username: log.username,
+        realName: log.real_name,
+        createdAt: log.created_at,
+        taskId: log.task_id
+      }))
+    });
+  } catch (e) {
+    console.error('获取日志列表失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 获取任务列表
+app.get('/api/tasks', auth, async (req, res) => {
+  try {
+    const connection = await getConn();
+    
+    const [tasks] = await connection.execute(`
+      SELECT t.*, 
+             o.username as owner_username, o.real_name as owner_real_name,
+             c.username as creator_username, c.real_name as creator_real_name
+      FROM tasks t
+      LEFT JOIN users o ON t.owner_user_id = o.id
+      LEFT JOIN users c ON t.creator_user_id = c.id
+      ORDER BY t.created_at DESC
+      LIMIT 100
+    `);
+    
+    await connection.end();
+    
+    res.json({ success: true, tasks });
+  } catch (e) {
+    console.error('获取任务列表失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
   }
 });
