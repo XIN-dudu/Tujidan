@@ -40,6 +40,32 @@ function toMySQLDateTime(value) {
   }
 }
 
+// 工具: 将前端传来的任务状态映射为数据库允许的取值
+function normalizeTaskStatus(input) {
+  const s = (input || '').toString().toLowerCase();
+  switch (s) {
+    case 'pending':
+    case 'not_started':
+      return 'not_started';
+    case 'inprogress':
+    case 'in_progress':
+    case 'doing':
+      return 'in_progress';
+    case 'paused':
+      return 'paused';
+    case 'completed':
+    case 'done':
+      return 'completed';
+    case 'closed':
+      return 'closed';
+    case 'cancelled':
+    case 'canceled':
+      return 'cancelled';
+    default:
+      return 'not_started';
+  }
+}
+
 // 鉴权中间件
 async function auth(req, res, next) {
   try {
@@ -363,19 +389,31 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// ---- Users（简易搜索，MVP：仅返回当前用户） ----
+// ---- Users（用户搜索） ----
 app.get('/api/users', auth, async (req, res) => {
   try {
     const connection = await getConn();
-    const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url FROM users WHERE id = ? AND status = 1 LIMIT 1',
-      [req.user.id]
-    );
+    const keyword = (req.query.keyword || '').toString().trim();
+    let users;
+    if (keyword) {
+      // 有关键词时，模糊搜索用户名和姓名（仅返回活跃用户）
+      const [userRows] = await connection.execute(
+        'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 AND (username LIKE ? OR real_name LIKE ?) ORDER BY id DESC LIMIT 20',
+        [`%${keyword}%`, `%${keyword}%`]
+      );
+      users = userRows;
+    } else {
+      // 没有关键词时，返回所有活跃用户（限制50个）
+      const [userRows] = await connection.execute(
+        'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 ORDER BY id DESC LIMIT 50'
+      );
+      users = userRows;
+    }
     await connection.end();
     return res.json({ success: true, users });
   } catch (e) {
     console.error('查询用户失败:', e);
-    return res.status(500).json({ success: false, message: '服务器内部错误' });
+    return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
   }
 });
 
@@ -545,13 +583,45 @@ app.get('/api/tasks', auth, async (req, res) => {
     const raw = parseInt(req.query.limit || '20', 10);
     const limit = Number.isFinite(raw) && raw > 0 && raw <= 50 ? raw : 20;
     const connection = await getConn();
-  let sql = 'SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE creator_id = ?';
-  const params = [req.user.id];
-  if (keyword) {
-    sql += ' AND task_name LIKE ?';
-    params.push(`%${keyword}%`);
-  }
-  sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
+    
+    // 检查用户是否是管理员或领导
+    const [roles] = await connection.execute(`
+      SELECT r.role_name 
+      FROM roles r
+      JOIN user_roles ur ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+    `, [req.user.id]);
+    
+    const userRoles = roles.map(r => r.role_name);
+    // founder和admin对任务的权限完全相同
+    const isAdminOrLeader = userRoles.includes('admin') || 
+                          userRoles.includes('founder') ||
+                          userRoles.includes('leader') || 
+                          userRoles.includes('管理员') || 
+                          userRoles.includes('领导');
+    
+    let sql = 'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks';
+    const params = [];
+    
+    if (isAdminOrLeader) {
+      // 管理员/领导可以看到所有任务（包括已发布的）
+      if (keyword) {
+        sql += ' WHERE task_name LIKE ?';
+        params.push(`%${keyword}%`);
+      }
+    } else {
+      // 普通用户只能看到已发布并分配给自己负责的任务
+      // 只有发布了之后，相关负责人才能看到任务（status='not_started'且assignee_id=当前用户）
+      // 或者自己负责的任务（assignee_id=当前用户且状态为in_progress或completed）
+      sql += ` WHERE ((status = 'not_started' AND assignee_id = ?) OR (assignee_id = ? AND status IN ('in_progress', 'completed')))`;
+      params.push(req.user.id, req.user.id);
+      if (keyword) {
+        sql += ' AND task_name LIKE ?';
+        params.push(`%${keyword}%`);
+      }
+    }
+    
+    sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
     const [rows] = await connection.execute(sql, params);
     await connection.end();
     res.json({ success: true, tasks: rows });
@@ -563,14 +633,35 @@ app.get('/api/tasks', auth, async (req, res) => {
 
 app.post('/api/tasks', auth, async (req, res) => {
   try {
-    const { name, priority = 'low', progress = 0, dueTime = null, ownerUserId } = req.body;
-    if (!name || !ownerUserId) {
-      return res.status(400).json({ success: false, message: '任务名称与负责人必填' });
+    const { name, description = null, priority = 'low', status = 'not_started', progress = 0, dueTime = null, planStartTime = null, ownerUserId } = req.body;
+    if (!name) {
+      return res.status(400).json({ success: false, message: '任务名称必填' });
     }
     if (typeof name !== 'string' || name.length > 64) {
       return res.status(400).json({ success: false, message: '任务名称长度超限' });
     }
     const connection = await getConn();
+    
+    // 检查用户是否有创建任务的权限（只有管理员/领导可以创建）
+    const [roles] = await connection.execute(`
+      SELECT r.role_name 
+      FROM roles r
+      JOIN user_roles ur ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+    `, [req.user.id]);
+    
+    const userRoles = roles.map(r => r.role_name);
+    // founder和admin对任务的权限完全相同
+    const isAdminOrLeader = userRoles.includes('admin') || 
+                          userRoles.includes('founder') ||
+                          userRoles.includes('leader') || 
+                          userRoles.includes('管理员') || 
+                          userRoles.includes('领导');
+    
+    if (!isAdminOrLeader) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '只有管理员/领导可以创建任务' });
+    }
     // 唯一性：同创建者下不重名
     const [dup] = await connection.execute(
       'SELECT id FROM tasks WHERE task_name = ? AND creator_id = ? LIMIT 1',
@@ -580,12 +671,17 @@ app.post('/api/tasks', auth, async (req, res) => {
       await connection.end();
       return res.status(409).json({ success: false, message: '任务名称不能重复' });
     }
+    // 转换日期时间格式
+    const planStartDt = toMySQLDateTime(planStartTime);
+    const dueDt = toMySQLDateTime(dueTime);
+    // 确保assignee_id不为NULL，如果为空则设置为创建者
+    const finalAssigneeId = ownerUserId || req.user.id;
     const [result] = await connection.execute(
-      'INSERT INTO tasks (task_name, priority, progress, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [name, priority, Math.min(Math.max(progress, 0), 100), dueTime, ownerUserId, req.user.id]
+      'INSERT INTO tasks (task_name, description, priority, status, progress, plan_start_time, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, description, priority, normalizeTaskStatus(status), Math.min(Math.max(progress, 0), 100), planStartDt, dueDt, finalAssigneeId, req.user.id]
     );
     const [rows] = await connection.execute(
-      'SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?',
+      'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?',
       [result.insertId]
     );
     await connection.end();
@@ -599,7 +695,7 @@ app.post('/api/tasks', auth, async (req, res) => {
 app.patch('/api/tasks/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { name, priority, progress, dueTime, ownerUserId } = req.body;
+    const { name, description, priority, status, progress, dueTime, planStartTime, ownerUserId } = req.body;
     const connection = await getConn();
     // 仅允许任务创建者修改
     const [exists] = await connection.execute('SELECT id FROM tasks WHERE id = ? AND creator_id = ? LIMIT 1', [id, req.user.id]);
@@ -607,11 +703,14 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
     }
+    // 转换日期时间格式
+    const planStartDt = toMySQLDateTime(planStartTime);
+    const dueDt = toMySQLDateTime(dueTime);
     await connection.execute(
-      'UPDATE tasks SET task_name = COALESCE(?, task_name), priority = COALESCE(?, priority), progress = COALESCE(?, progress), plan_end_time = COALESCE(?, plan_end_time), assignee_id = COALESCE(?, assignee_id) WHERE id = ?',
-      [name, priority, progress, dueTime, ownerUserId, id]
+      'UPDATE tasks SET task_name = COALESCE(?, task_name), description = COALESCE(?, description), priority = COALESCE(?, priority), status = COALESCE(?, status), progress = COALESCE(?, progress), plan_start_time = COALESCE(?, plan_start_time), plan_end_time = COALESCE(?, plan_end_time), assignee_id = COALESCE(?, assignee_id) WHERE id = ?',
+      [name, description, priority, normalizeTaskStatus(status), progress, planStartDt, dueDt, ownerUserId, id]
     );
-    const [rows] = await connection.execute('SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
     await connection.end();
     res.json({ success: true, task: rows[0] });
   } catch (e) {
@@ -629,6 +728,98 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error('删除任务失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+// 任务发布（指定负责人并置为未开始）
+app.post('/api/tasks/:id/publish', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { ownerUserId } = req.body;
+    const connection = await getConn();
+    const [exists] = await connection.execute('SELECT id, assignee_id, status FROM tasks WHERE id = ? AND creator_id = ? LIMIT 1', [id, req.user.id]);
+    if (exists.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在或无权限' });
+    }
+    const task = exists[0];
+    // 判断是否应该撤回分配：任务已分配（status='not_started'且assignee_id已分配）
+    const isAssigned = task.status == 'not_started' && task.assignee_id != null;
+    
+    if (isAssigned) {
+      // 撤回分配：将assignee_id设置为创建者，这样原来的负责人就看不到此任务了
+      // 因为普通用户只能看到 assignee_id=当前用户 的任务
+      await connection.execute('UPDATE tasks SET assignee_id = ? WHERE id = ?', [req.user.id, id]);
+    } else {
+      // 分配任务：设置assignee_id和status
+      // 如果ownerUserId为空，则设置为创建者（避免assignee_id为NULL）
+      const finalAssigneeId = ownerUserId || req.user.id;
+      await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [finalAssigneeId, 'not_started', id]);
+    }
+    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    await connection.end();
+    res.json({ success: true, task: rows[0] });
+  } catch (e) {
+    console.error('发布/撤回任务失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+// 接收任务（接单/接受）
+app.post('/api/tasks/:id/accept', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    const [taskInfo] = await connection.execute('SELECT id, assignee_id, status FROM tasks WHERE id = ? LIMIT 1', [id]);
+    if (taskInfo.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    const task = taskInfo[0];
+    // 只有负责人能接收任务
+    if (task.assignee_id != req.user.id) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '只有任务负责人才能接收任务' });
+    }
+    // 只有状态为not_started的任务才能接收
+    if (task.status != 'not_started') {
+      await connection.end();
+      return res.status(400).json({ success: false, message: '只有待开始的任务才能接收' });
+    }
+    await connection.execute('UPDATE tasks SET status = ? WHERE id = ?', ['in_progress', id]);
+    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    await connection.end();
+    res.json({ success: true, task: rows[0] });
+  } catch (e) {
+    console.error('接收任务失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+// 取消接收任务（将状态改回待开始）
+app.post('/api/tasks/:id/cancel-accept', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    const [taskInfo] = await connection.execute('SELECT id, assignee_id, status FROM tasks WHERE id = ? LIMIT 1', [id]);
+    if (taskInfo.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    const task = taskInfo[0];
+    // 检查当前用户是否是任务接收者
+    if (task.assignee_id != req.user.id) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '只有任务接收者可以取消接收' });
+    }
+    // 将状态改回待开始，不清空负责人（保留分配记录）
+    await connection.execute('UPDATE tasks SET status = ? WHERE id = ?', ['not_started', id]);
+    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    await connection.end();
+    res.json({ success: true, task: rows[0] });
+  } catch (e) {
+    console.error('取消接收任务失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
   }
 });
@@ -660,9 +851,10 @@ app.post('/api/logs', auth, async (req, res) => {
         await connection.end();
         return res.status(409).json({ success: false, message: '任务名称不能重复' });
       }
+      const dueDt = toMySQLDateTime(dueTime);
       const [tRes] = await connection.execute(
         'INSERT INTO tasks (task_name, priority, progress, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?)',
-        [name, tPriority, Math.min(Math.max(tProgress, 0), 100), dueTime, ownerUserId, req.user.id]
+        [name, tPriority, Math.min(Math.max(tProgress, 0), 100), dueDt, ownerUserId, req.user.id]
       );
       finalTaskId = tRes.insertId;
     }

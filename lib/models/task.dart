@@ -4,6 +4,7 @@ class Task {
   final String description;
   final String assignee;
   final DateTime deadline;
+  final DateTime? plannedStart; // 计划开始时间
   final TaskPriority priority;
   final TaskStatus status;
   final int progress; // 0-100
@@ -16,6 +17,7 @@ class Task {
     required this.description,
     required this.assignee,
     required this.deadline,
+    this.plannedStart,
     required this.priority,
     required this.status,
     required this.progress,
@@ -25,23 +27,37 @@ class Task {
 
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(
-      id: json['id'] ?? '',
+      id: (json['id'] ?? '').toString(),
       name: json['name'] ?? '',
       description: json['description'] ?? '',
-      assignee: json['assignee'] ?? '',
-      deadline: DateTime.parse(json['deadline'] ?? DateTime.now().toIso8601String()),
+      assignee: (json['assignee'] ?? json['owner_user_id'] ?? '').toString(),
+      deadline: DateTime.parse((json['deadline'] ?? json['due_time'] ?? DateTime.now().toIso8601String()).toString()),
+      plannedStart: json['plan_start_time'] != null ? DateTime.parse(json['plan_start_time'].toString()) : null,
       priority: TaskPriority.values.firstWhere(
-        (e) => e.name == json['priority'],
+        (e) => e.name == (json['priority'] ?? 'low'),
         orElse: () => TaskPriority.low,
       ),
-      status: TaskStatus.values.firstWhere(
-        (e) => e.name == json['status'],
-        orElse: () => TaskStatus.pending,
-      ),
+      status: _mapStatus(json['status']),
       progress: json['progress'] ?? 0,
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+      createdAt: DateTime.parse((json['createdAt'] ?? json['created_at'] ?? DateTime.now().toIso8601String()).toString()),
+      updatedAt: DateTime.parse((json['updatedAt'] ?? json['updated_at'] ?? DateTime.now().toIso8601String()).toString()),
     );
+  }
+
+  static TaskStatus _mapStatus(dynamic v) {
+    final s = (v ?? '').toString();
+    switch (s) {
+      case 'in_progress':
+        return TaskStatus.inProgress;
+      case 'completed':
+        return TaskStatus.completed;
+      case 'cancelled':
+        return TaskStatus.cancelled;
+      case 'pending':
+      case 'not_started':
+      default:
+        return TaskStatus.pending;
+    }
   }
 
   Map<String, dynamic> toJson() {
@@ -49,8 +65,9 @@ class Task {
       'id': id,
       'name': name,
       'description': description,
-      'assignee': assignee,
-      'deadline': deadline.toIso8601String(),
+      'ownerUserId': assignee.isEmpty ? null : int.tryParse(assignee),
+      'dueTime': deadline.toIso8601String(),
+      'planStartTime': plannedStart?.toIso8601String(),
       'priority': priority.name,
       'status': status.name,
       'progress': progress,
@@ -65,6 +82,7 @@ class Task {
     String? description,
     String? assignee,
     DateTime? deadline,
+    DateTime? plannedStart,
     TaskPriority? priority,
     TaskStatus? status,
     int? progress,
@@ -77,6 +95,7 @@ class Task {
       description: description ?? this.description,
       assignee: assignee ?? this.assignee,
       deadline: deadline ?? this.deadline,
+      plannedStart: plannedStart ?? this.plannedStart,
       priority: priority ?? this.priority,
       status: status ?? this.status,
       progress: progress ?? this.progress,

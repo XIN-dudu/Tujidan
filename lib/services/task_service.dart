@@ -40,9 +40,19 @@ class TaskService {
     );
   }
 
+  // 创建并分配任务
+  static Future<ApiResponse<Task>> createAndPublishTask(Task task, {String? assigneeId}) async {
+    final response = await createTask(task);
+    if (!response.success || response.data == null) {
+      return response;
+    }
+    // 创建成功后立即分配
+    return await publishTask(response.data!.id, ownerUserId: assigneeId);
+  }
+
   // 更新任务
   static Future<ApiResponse<Task>> updateTask(Task task) async {
-    return await ApiClient.put<Task>(
+    return await ApiClient.patch<Task>(
       '/tasks/${task.id}',
       body: task.toJson(),
       fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
@@ -54,6 +64,33 @@ class TaskService {
     return await ApiClient.put<Task>(
       '/tasks/$taskId/progress',
       body: {'progress': progress},
+      fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  // 分配任务（指定负责人并置为未开始）
+  static Future<ApiResponse<Task>> publishTask(String taskId, {String? ownerUserId}) async {
+    return await ApiClient.post<Task>(
+      '/tasks/$taskId/publish',
+      body: {
+        if (ownerUserId != null) 'ownerUserId': int.tryParse(ownerUserId),
+      },
+      fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  // 接收任务（自己接单并置为进行中）
+  static Future<ApiResponse<Task>> acceptTask(String taskId) async {
+    return await ApiClient.post<Task>(
+      '/tasks/$taskId/accept',
+      fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  // 取消接收任务（将状态改回待开始）
+  static Future<ApiResponse<Task>> cancelAcceptTask(String taskId) async {
+    return await ApiClient.post<Task>(
+      '/tasks/$taskId/cancel-accept',
       fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
     );
   }

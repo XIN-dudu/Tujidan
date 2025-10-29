@@ -4,6 +4,7 @@ import 'package:test_flutter/login_page.dart';
 import 'package:test_flutter/pages/log_list_page.dart';
 import 'package:test_flutter/pages/log_view_page.dart';
 import 'package:test_flutter/pages/user_profile_page.dart';
+import 'package:test_flutter/pages/task_list_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -40,7 +41,7 @@ class _HomePageState extends State<HomePage> {
     const QuadrantPage(),
     const LogViewPage(),
     const LogListPage(),
-    const Center(child: Text('任务')),
+    const TaskListPage(),
     const UserProfilePage(),
   ];
 

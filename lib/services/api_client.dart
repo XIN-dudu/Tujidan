@@ -138,12 +138,30 @@ class ApiClient {
     T Function(dynamic)? fromJson,
   ) {
     try {
+      // 检查是否返回了HTML（通常是错误页面）
+      if (response.headers['content-type']?.contains('text/html') == true ||
+          response.body.trim().startsWith('<!DOCTYPE') ||
+          response.body.trim().startsWith('<html')) {
+        return ApiResponse<T>(
+          success: false,
+          message: '服务器返回了错误页面，可能是接口不存在或服务器错误。状态码: ${response.statusCode}',
+          code: response.statusCode,
+        );
+      }
+
       final Map<String, dynamic> jsonData = jsonDecode(response.body);
       
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final dynamic payload = jsonData.containsKey('data')
-            ? jsonData['data']
-            : (jsonData['log'] ?? jsonData['logs'] ?? jsonData['task'] ?? jsonData['tasks']);
+        // 优先使用 data 字段，否则尝试提取特定字段，如果都没有则使用整个响应对象
+        final dynamic payload;
+        if (jsonData.containsKey('data')) {
+          payload = jsonData['data'];
+        } else if (jsonData.containsKey('users')) {
+          // 对于 users 接口，返回整个响应对象以便前端访问 users 字段
+          payload = jsonData;
+        } else {
+          payload = (jsonData['log'] ?? jsonData['logs'] ?? jsonData['task'] ?? jsonData['tasks'] ?? jsonData);
+        }
         return ApiResponse<T>(
           success: true,
           message: jsonData['message'] ?? '请求成功',
@@ -158,6 +176,15 @@ class ApiClient {
         );
       }
     } catch (e) {
+      // 如果响应是HTML，给出更友好的错误提示
+      if (response.body.trim().startsWith('<!DOCTYPE') || response.body.trim().startsWith('<html')) {
+        return ApiResponse<T>(
+          success: false,
+          message: '服务器返回了HTML页面而非JSON，可能是接口路径错误或服务器未正确配置。请检查后端服务是否正常运行。',
+          code: response.statusCode,
+        );
+      }
+      
       return ApiResponse<T>(
         success: false,
         message: '数据解析失败: $e',
