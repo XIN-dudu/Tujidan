@@ -545,13 +545,13 @@ app.get('/api/tasks', auth, async (req, res) => {
     const raw = parseInt(req.query.limit || '20', 10);
     const limit = Number.isFinite(raw) && raw > 0 && raw <= 50 ? raw : 20;
     const connection = await getConn();
-    let sql = 'SELECT id, name, priority, progress, due_time, owner_user_id, creator_user_id FROM tasks WHERE creator_user_id = ?';
-    const params = [req.user.id];
-    if (keyword) {
-      sql += ' AND name LIKE ?';
-      params.push(`%${keyword}%`);
-    }
-    sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
+  let sql = 'SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE creator_id = ?';
+  const params = [req.user.id];
+  if (keyword) {
+    sql += ' AND task_name LIKE ?';
+    params.push(`%${keyword}%`);
+  }
+  sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
     const [rows] = await connection.execute(sql, params);
     await connection.end();
     res.json({ success: true, tasks: rows });
@@ -573,7 +573,7 @@ app.post('/api/tasks', auth, async (req, res) => {
     const connection = await getConn();
     // 唯一性：同创建者下不重名
     const [dup] = await connection.execute(
-      'SELECT id FROM tasks WHERE name = ? AND creator_user_id = ? LIMIT 1',
+      'SELECT id FROM tasks WHERE task_name = ? AND creator_id = ? LIMIT 1',
       [name, req.user.id]
     );
     if (dup.length > 0) {
@@ -581,11 +581,11 @@ app.post('/api/tasks', auth, async (req, res) => {
       return res.status(409).json({ success: false, message: '任务名称不能重复' });
     }
     const [result] = await connection.execute(
-      'INSERT INTO tasks (name, priority, progress, due_time, owner_user_id, creator_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO tasks (task_name, priority, progress, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?)',
       [name, priority, Math.min(Math.max(progress, 0), 100), dueTime, ownerUserId, req.user.id]
     );
     const [rows] = await connection.execute(
-      'SELECT id, name, priority, progress, due_time, owner_user_id, creator_user_id FROM tasks WHERE id = ?',
+      'SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?',
       [result.insertId]
     );
     await connection.end();
@@ -602,16 +602,16 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
     const { name, priority, progress, dueTime, ownerUserId } = req.body;
     const connection = await getConn();
     // 仅允许任务创建者修改
-    const [exists] = await connection.execute('SELECT id FROM tasks WHERE id = ? AND creator_user_id = ? LIMIT 1', [id, req.user.id]);
+    const [exists] = await connection.execute('SELECT id FROM tasks WHERE id = ? AND creator_id = ? LIMIT 1', [id, req.user.id]);
     if (exists.length === 0) {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
     }
     await connection.execute(
-      'UPDATE tasks SET name = COALESCE(?, name), priority = COALESCE(?, priority), progress = COALESCE(?, progress), due_time = COALESCE(?, due_time), owner_user_id = COALESCE(?, owner_user_id) WHERE id = ?',
+      'UPDATE tasks SET task_name = COALESCE(?, task_name), priority = COALESCE(?, priority), progress = COALESCE(?, progress), plan_end_time = COALESCE(?, plan_end_time), assignee_id = COALESCE(?, assignee_id) WHERE id = ?',
       [name, priority, progress, dueTime, ownerUserId, id]
     );
-    const [rows] = await connection.execute('SELECT id, name, priority, progress, due_time, owner_user_id, creator_user_id FROM tasks WHERE id = ?', [id]);
+    const [rows] = await connection.execute('SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
     await connection.end();
     res.json({ success: true, task: rows[0] });
   } catch (e) {
@@ -624,7 +624,7 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const connection = await getConn();
-    await connection.execute('DELETE FROM tasks WHERE id = ? AND creator_user_id = ?', [id, req.user.id]);
+    await connection.execute('DELETE FROM tasks WHERE id = ? AND creator_id = ?', [id, req.user.id]);
     await connection.end();
     res.json({ success: true });
   } catch (e) {
@@ -637,9 +637,11 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
 app.post('/api/logs', auth, async (req, res) => {
   try {
     const {
+      title = null,
       content,
       priority = 'low',
       progress = 0,
+      type = null,
       timeFrom = null,
       timeTo = null,
       taskId = null,
@@ -653,13 +655,13 @@ app.post('/api/logs', auth, async (req, res) => {
     let finalTaskId = taskId;
     if (!finalTaskId && createNewTask && createNewTask.name) {
       const { name, priority: tPriority = 'low', progress: tProgress = 0, dueTime = null, ownerUserId = req.user.id } = createNewTask;
-      const [dup] = await connection.execute('SELECT id FROM tasks WHERE name = ? AND creator_user_id = ? LIMIT 1', [name, req.user.id]);
+      const [dup] = await connection.execute('SELECT id FROM tasks WHERE task_name = ? AND creator_id = ? LIMIT 1', [name, req.user.id]);
       if (dup.length > 0) {
         await connection.end();
         return res.status(409).json({ success: false, message: '任务名称不能重复' });
       }
       const [tRes] = await connection.execute(
-        'INSERT INTO tasks (name, priority, progress, due_time, owner_user_id, creator_user_id) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO tasks (task_name, priority, progress, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?)',
         [name, tPriority, Math.min(Math.max(tProgress, 0), 100), dueTime, ownerUserId, req.user.id]
       );
       finalTaskId = tRes.insertId;
@@ -669,8 +671,8 @@ app.post('/api/logs', auth, async (req, res) => {
     const endDt = toMySQLDateTime(timeTo);
 
     const [lRes] = await connection.execute(
-      'INSERT INTO logs (author_user_id, content, priority, progress, time_from, time_to, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [req.user.id, content, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId]
+      'INSERT INTO logs (author_user_id, title, content, log_type, priority, progress, time_from, time_to, task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [req.user.id, title, content, type, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId]
     );
 
     if (syncTaskProgress && finalTaskId) {
@@ -680,7 +682,7 @@ app.post('/api/logs', auth, async (req, res) => {
     const [logRows] = await connection.execute('SELECT * FROM logs WHERE id = ?', [lRes.insertId]);
     let taskRow = null;
     if (finalTaskId) {
-      const [tRows] = await connection.execute('SELECT id, name, priority, progress, due_time, owner_user_id, creator_user_id FROM tasks WHERE id = ?', [finalTaskId]);
+      const [tRows] = await connection.execute('SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [finalTaskId]);
       taskRow = tRows[0] || null;
     }
     await connection.end();
@@ -744,7 +746,9 @@ app.get('/api/logs', auth, async (req, res) => {
       data: rows.map(row => ({
         id: row.id,
         userId: row.author_user_id,
+        title: row.title,
         content: row.content,
+        type: row.log_type,
         priority: row.priority,
         // 关键修复：使用 time_from/time_to
         startTime: row.time_from,
@@ -798,7 +802,7 @@ app.get('/api/logs/:id', auth, async (req, res) => {
 app.patch('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { content, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false } = req.body;
+    const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false } = req.body;
     const connection = await getConn();
     const [exists] = await connection.execute('SELECT id, task_id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
     if (exists.length === 0) {
@@ -806,9 +810,9 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: '日志不存在' });
     }
     const toNull = (v) => (v === undefined ? null : v);
-    const params = [toNull(content), toNull(priority), toNull(progress), toMySQLDateTime(timeFrom), toMySQLDateTime(timeTo), toNull(taskId), id];
+    const params = [toNull(title), toNull(content), toNull(type), toNull(priority), toNull(progress), toMySQLDateTime(timeFrom), toMySQLDateTime(timeTo), toNull(taskId), id];
     await connection.execute(
-      'UPDATE logs SET content = COALESCE(?, content), priority = COALESCE(?, priority), progress = COALESCE(?, progress), time_from = COALESCE(?, time_from), time_to = COALESCE(?, time_to), task_id = COALESCE(?, task_id) WHERE id = ?',
+      'UPDATE logs SET title = COALESCE(?, title), content = COALESCE(?, content), log_type = COALESCE(?, log_type), priority = COALESCE(?, priority), progress = COALESCE(?, progress), time_from = COALESCE(?, time_from), time_to = COALESCE(?, time_to), task_id = COALESCE(?, task_id) WHERE id = ?',
       params
     );
     if (syncTaskProgress && (taskId || exists[0].task_id)) {

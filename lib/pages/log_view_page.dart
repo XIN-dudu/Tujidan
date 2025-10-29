@@ -533,12 +533,21 @@ class _LogViewPageState extends State<LogViewPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  log.content,
+                  (log.title.isNotEmpty ? log.title : log.content),
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                 ),
                 const SizedBox(height: 4),
                 Row(
                   children: [
+                    if (log.type != null) ...[
+                      Icon(Icons.label, size: 14, color: Colors.blueGrey[700]),
+                      const SizedBox(width: 4),
+                      Text(
+                        log.type!,
+                        style: TextStyle(fontSize: 12, color: Colors.blueGrey[700]),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
                     Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
                     const SizedBox(width: 4),
                     Text(
@@ -676,7 +685,7 @@ class _LogViewPageState extends State<LogViewPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  log.content,
+                                  (log.title.isNotEmpty ? log.title : log.content),
                                   style: const TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w500,
@@ -687,6 +696,15 @@ class _LogViewPageState extends State<LogViewPage> {
                                 const SizedBox(height: 4),
                                 Row(
                                   children: [
+                                    if (log.type != null) ...[
+                                      Icon(Icons.label, size: 14, color: Colors.blueGrey[700]),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        log.type!,
+                                        style: TextStyle(fontSize: 12, color: Colors.blueGrey[700]),
+                                      ),
+                                      const SizedBox(width: 12),
+                                    ],
                                     Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
                                     const SizedBox(width: 4),
                                     Text(

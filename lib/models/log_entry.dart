@@ -2,7 +2,9 @@ import 'task.dart';
 
 class LogEntry {
   final String id;
+  final String title;        // 新增：日志标题
   final String content;
+  final String? type;        // 新增：日志类型
   final String? taskId;
   final TaskPriority priority;
   final DateTime time;       // 原本日志时间
@@ -13,7 +15,9 @@ class LogEntry {
 
   LogEntry({
     required this.id,
+    required this.title,
     required this.content,
+    this.type,
     this.taskId,
     required this.priority,
     required this.time,
@@ -49,7 +53,9 @@ class LogEntry {
 
     return LogEntry(
       id: toStringValue(json['id']),
+      title: (json['title'] ?? '').toString(),
       content: (json['content'] ?? '').toString(),
+      type: toNullableString(json['type'] ?? json['log_type']),
       taskId: toNullableString(json['taskId'] ?? json['task_id']),
       priority: parsePriority(json['priority']),
       // 优先使用后端的开始时间，其次 time/time_from，最后才用 createdAt
@@ -68,7 +74,9 @@ class LogEntry {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'title': title,
       'content': content,
+      'type': type,
       'taskId': taskId,
       'priority': priority.name,
       'time': time.toIso8601String(),
@@ -81,7 +89,9 @@ class LogEntry {
 
   LogEntry copyWith({
     String? id,
+    String? title,
     String? content,
+    String? type,
     String? taskId,
     TaskPriority? priority,
     DateTime? time,
@@ -92,7 +102,9 @@ class LogEntry {
   }) {
     return LogEntry(
       id: id ?? this.id,
+      title: title ?? this.title,
       content: content ?? this.content,
+      type: type ?? this.type,
       taskId: taskId ?? this.taskId,
       priority: priority ?? this.priority,
       time: time ?? this.time,

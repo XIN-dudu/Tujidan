@@ -54,7 +54,9 @@ class LogService {
   /// 创建日志
   static Future<ApiResponse<LogEntry>> createLog(LogEntry log) async {
     final body = {
+      'title': log.title,
       'content': log.content,
+      'type': log.type,
       'priority': log.priority.name == 'medium' ? 'mid' : log.priority.name,
       'timeFrom': (log.startTime ?? log.time).toIso8601String(),
       'timeTo': log.endTime?.toIso8601String(),
@@ -72,7 +74,9 @@ class LogService {
   /// 更新日志
   static Future<ApiResponse<LogEntry>> updateLog(LogEntry log) async {
     final body = {
+      'title': log.title,
       'content': log.content,
+      'type': log.type,
       'priority': log.priority.name == 'medium' ? 'mid' : log.priority.name,
       'timeFrom': (log.startTime ?? log.time).toIso8601String(),
       'timeTo': log.endTime?.toIso8601String(),

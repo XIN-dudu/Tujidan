@@ -18,6 +18,7 @@ class LogEditPage extends StatefulWidget {
 
 class _LogEditPageState extends State<LogEditPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _titleController = TextEditingController();
   final TextEditingController _contentController = TextEditingController();
   
   Task? _selectedTask;
@@ -27,6 +28,8 @@ class _LogEditPageState extends State<LogEditPage> {
   DateTime? _endTime;
   bool _isLoading = false;
   bool _isSaving = false;
+  String? _selectedType; // work/study/life/other
+  final List<String> _types = const ['work', 'study', 'life', 'other'];
 
   @override
   void initState() {
@@ -38,7 +41,9 @@ class _LogEditPageState extends State<LogEditPage> {
 
   void _initializeFromExistingLog() {
     final log = widget.logEntry!;
+    _titleController.text = log.title;
     _contentController.text = log.content;
+    _selectedType = log.type;
     _selectedPriority = log.priority;
     _selectedTime = log.time;
     _startTime = log.startTime ?? log.time;
@@ -72,6 +77,7 @@ class _LogEditPageState extends State<LogEditPage> {
 
   @override
   void dispose() {
+    _titleController.dispose();
     _contentController.dispose();
     super.dispose();
   }
@@ -84,7 +90,9 @@ class _LogEditPageState extends State<LogEditPage> {
     try {
       final logEntry = LogEntry(
         id: widget.logEntry?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        title: _titleController.text.trim(),
         content: _contentController.text.trim(),
+        type: _selectedType,
         taskId: _selectedTask?.id,
         priority: _selectedPriority,
         time: _selectedTime,
@@ -211,13 +219,32 @@ class _LogEditPageState extends State<LogEditPage> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Form(
-              key: _formKey,
-              child: Padding(
+          : SafeArea(
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                    // 日志标题
+                    TextFormField(
+                      controller: _titleController,
+                      decoration: const InputDecoration(
+                        labelText: '日志标题',
+                        hintText: '请输入标题',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 1,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return '标题不能为空';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
                     // 日志内容
                     TextFormField(
                       controller: _contentController,
@@ -233,6 +260,26 @@ class _LogEditPageState extends State<LogEditPage> {
                         }
                         return null;
                       },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 日志类型
+                    Row(
+                      children: [
+                        const Text('日志类型：'),
+                        const SizedBox(width: 12),
+                        DropdownButton<String>(
+                          value: _selectedType,
+                          hint: const Text('选择类型'),
+                          items: _types
+                              .map((t) => DropdownMenuItem<String>(
+                                    value: t,
+                                    child: Text(t),
+                                  ))
+                              .toList(),
+                          onChanged: (v) => setState(() => _selectedType = v),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 16),
 
@@ -327,10 +374,12 @@ class _LogEditPageState extends State<LogEditPage> {
                             )
                           : Text(widget.logEntry == null ? '创建日志' : '更新日志'),
                     ),
+                    SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
                   ],
                 ),
               ),
             ),
+          ),
     );
   }
 }

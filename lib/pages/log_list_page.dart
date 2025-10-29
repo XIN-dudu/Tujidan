@@ -189,16 +189,20 @@ class _LogListPageState extends State<LogListPage> {
                     ),
                     const SizedBox(width: 12),
                     DropdownButton<String>(
-                      value: _selectedType,
+                      value: _selectedType ?? '',
                       hint: const Text('类型'),
-                      items: _types.map((type) {
-                        return DropdownMenuItem(
-                          value: type,
-                          child: Text(type),
-                        );
-                      }).toList(),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: '',
+                          child: Text('全部'),
+                        ),
+                        ..._types.map((type) => DropdownMenuItem<String>(
+                              value: type,
+                              child: Text(type),
+                            )),
+                      ],
                       onChanged: (value) {
-                        setState(() => _selectedType = value);
+                        setState(() => _selectedType = (value == '' ? null : value));
                         _loadLogs(
                           keyword: _searchQuery,
                           type: _selectedType,
@@ -450,7 +454,7 @@ class _LogListPageState extends State<LogListPage> {
                                 CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    log.content,
+                                    (log.title.isNotEmpty ? log.title : log.content),
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
@@ -460,6 +464,15 @@ class _LogListPageState extends State<LogListPage> {
                                   const SizedBox(height: 8),
                                   Row(
                                     children: [
+                                      if (log.type != null) ...[
+                                        Icon(Icons.label, size: 16, color: Colors.blueGrey),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          log.type!,
+                                          style: TextStyle(fontSize: 12, color: Colors.blueGrey[700]),
+                                        ),
+                                        const SizedBox(width: 16),
+                                      ],
                                       Icon(Icons.schedule,
                                           size: 16,
                                           color: Colors.grey[600]),
