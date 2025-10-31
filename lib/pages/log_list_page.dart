@@ -257,6 +257,7 @@ class _LogListPageState extends State<LogListPage> {
               itemCount: _logs.length,
               itemBuilder: (context, index) {
                 final log = _logs[index];
+                print('logStatus: ${log.logStatus}');
                 return Dismissible(
                   key: Key(log.id),
                   direction: DismissDirection.endToStart,

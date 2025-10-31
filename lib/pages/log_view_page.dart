@@ -6,7 +6,9 @@ import '../services/log_service.dart';
 enum ViewType { month, week, day }
 
 class LogViewPage extends StatefulWidget {
-  const LogViewPage({super.key});
+  final LogEntry? logEntry; // 要查看的日志
+
+  const LogViewPage({super.key, this.logEntry});
 
   @override
   State<LogViewPage> createState() => _LogViewPageState();
@@ -22,8 +24,43 @@ class _LogViewPageState extends State<LogViewPage> {
   @override
   void initState() {
     super.initState();
-    _selectedDate = DateTime.now(); // 默认选中今天
-    _loadLogs();
+    if (widget.logEntry != null) {
+      // 如果传入了具体日志，设置日期并加载对应日期的日志
+      _selectedDate = widget.logEntry!.time;
+      _currentDate = widget.logEntry!.time;
+      _loadLogById(widget.logEntry!.id);
+    } else {
+      // 否则加载当前日期的日志
+      _selectedDate = DateTime.now();
+      _loadLogs();
+    }
+  }
+
+  Future<void> _loadLogById(String logId) async {
+    setState(() => _isLoading = true);
+    try {
+      final response = await LogService.getLogById(logId);
+      if (response.success && response.data != null) {
+        setState(() {
+          _logs = [response.data!];
+          _isLoading = false;
+        });
+      } else {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('加载日志失败: ${response.message}')),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载日志失败: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _loadLogs() async {
@@ -539,6 +576,38 @@ class _LogViewPageState extends State<LogViewPage> {
                 const SizedBox(height: 4),
                 Row(
                   children: [
+                    // 状态指示器
+                    Icon(
+                      log.logStatus == 'completed' 
+                        ? Icons.check_circle 
+                        : log.logStatus == 'cancelled'
+                          ? Icons.cancel
+                          : Icons.radio_button_unchecked,
+                      size: 14,
+                      color: log.logStatus == 'completed' 
+                        ? Colors.green 
+                        : log.logStatus == 'cancelled'
+                          ? Colors.red
+                          : Colors.orange,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      log.logStatus == 'completed' 
+                        ? '已完成' 
+                        : log.logStatus == 'cancelled'
+                          ? '已取消'
+                          : '进行中',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: log.logStatus == 'completed' 
+                          ? Colors.green 
+                          : log.logStatus == 'cancelled'
+                            ? Colors.red
+                            : Colors.orange,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                     if (log.type != null) ...[
                       Icon(Icons.label, size: 14, color: Colors.blueGrey[700]),
                       const SizedBox(width: 4),

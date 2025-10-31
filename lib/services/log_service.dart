@@ -63,6 +63,7 @@ class LogService {
       'taskId': log.taskId != null && log.taskId!.isNotEmpty
           ? int.tryParse(log.taskId!)
           : null,
+      'logStatus': log.logStatus,
     };
     return await ApiClient.post<LogEntry>(
       '/logs',
@@ -83,6 +84,7 @@ class LogService {
       'taskId': log.taskId != null && log.taskId!.isNotEmpty
           ? int.tryParse(log.taskId!)
           : null,
+      'logStatus': log.logStatus,
     };
     return await ApiClient.patch<LogEntry>(
       '/logs/${log.id}',
@@ -94,6 +96,29 @@ class LogService {
   /// 删除日志
   static Future<ApiResponse<void>> deleteLog(String id) async {
     return await ApiClient.delete<void>('/logs/$id');
+  }
+
+  /// 标记日志为完成
+  static Future<ApiResponse<LogEntry>> completeLog(String id) async {
+    return await ApiClient.patch<LogEntry>(
+      '/logs/$id',
+      body: {'logStatus': 'completed'},
+      fromJson: (data) => LogEntry.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  /// 标记日志为未完成
+  static Future<ApiResponse<LogEntry>> incompleteLog(String id) async {
+    return await ApiClient.patch<LogEntry>(
+      '/logs/$id',
+      body: {'logStatus': 'pending'},
+      fromJson: (data) => LogEntry.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  /// 根据任务完成状态同步日志完成状态
+  static Future<ApiResponse<void>> syncLogCompletionByTask(String taskId) async {
+    return await ApiClient.patch<void>('/logs/sync-by-task/$taskId');
   }
 }
 

@@ -26,11 +26,12 @@ class Task {
   });
 
   factory Task.fromJson(Map<String, dynamic> json) {
+    print('[Task.fromJson] Raw JSON: $json');
     return Task(
       id: (json['id'] ?? '').toString(),
       name: json['name'] ?? '',
       description: json['description'] ?? '',
-      assignee: (json['assignee'] ?? json['owner_user_id'] ?? '').toString(),
+      assignee: json['assignee']?.toString() ?? json['owner_user_id']?.toString() ?? '',
       deadline: DateTime.parse((json['deadline'] ?? json['due_time'] ?? DateTime.now().toIso8601String()).toString()),
       plannedStart: json['plan_start_time'] != null ? DateTime.parse(json['plan_start_time'].toString()) : null,
       priority: TaskPriority.values.firstWhere(

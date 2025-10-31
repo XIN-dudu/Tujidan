@@ -12,6 +12,8 @@ class LogEntry {
   final DateTime updatedAt;
   final DateTime? startTime; // 新增：开始时间
   final DateTime? endTime;   // 新增：结束时间
+  final String logStatus;    // 主要状态字段：pending, completed, cancelled
+  final bool isCompleted;    // 新增：完成状态（从logStatus派生）
 
   LogEntry({
     required this.id,
@@ -25,11 +27,17 @@ class LogEntry {
     required this.updatedAt,
     this.startTime,
     this.endTime,
-  });
+    this.logStatus = 'pending',
+    bool? isCompleted,
+  }) : isCompleted = isCompleted ?? (logStatus == 'completed');
 
   factory LogEntry.fromJson(Map<String, dynamic> json) {
     String toStringValue(dynamic v) => v == null ? '' : v.toString();
     String? toNullableString(dynamic v) => v == null ? null : v.toString();
+    String? parseTaskId(dynamic v) {
+      if (v == null) return null;
+      return v.toString();  // 直接转换为字符串，因为后端总是返回整数
+    }
     TaskPriority parsePriority(dynamic v) {
       final s = (v ?? '').toString();
       switch (s) {
@@ -56,7 +64,7 @@ class LogEntry {
       title: (json['title'] ?? '').toString(),
       content: (json['content'] ?? '').toString(),
       type: toNullableString(json['type'] ?? json['log_type']),
-      taskId: toNullableString(json['taskId'] ?? json['task_id']),
+      taskId: parseTaskId(json['taskId'] ?? json['task_id']),
       priority: parsePriority(json['priority']),
       // 优先使用后端的开始时间，其次 time/time_from，最后才用 createdAt
       time: parseTime(json['startTime'] ?? json['start_time'] ?? json['time'] ?? json['time_from'] ?? json['createdAt'] ?? json['created_at']),
@@ -68,6 +76,7 @@ class LogEntry {
       endTime: json['endTime'] != null
           ? parseTime(json['endTime'])
           : (json['end_time'] != null ? parseTime(json['end_time']) : null),
+      logStatus: _normalizeLogStatus(json['log_status'] ?? json['logStatus']),
     );
   }
 
@@ -84,6 +93,8 @@ class LogEntry {
       'updatedAt': updatedAt.toIso8601String(),
       'start_time': startTime?.toIso8601String(),
       'end_time': endTime?.toIso8601String(),
+      'log_status': logStatus,
+      'isCompleted': isCompleted,
     };
   }
 
@@ -99,7 +110,10 @@ class LogEntry {
     DateTime? updatedAt,
     DateTime? startTime,
     DateTime? endTime,
+    String? logStatus,
+    bool? isCompleted,
   }) {
+    final newLogStatus = logStatus ?? this.logStatus;
     return LogEntry(
       id: id ?? this.id,
       title: title ?? this.title,
@@ -112,6 +126,46 @@ class LogEntry {
       updatedAt: updatedAt ?? this.updatedAt,
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
+      logStatus: newLogStatus,
+      isCompleted: isCompleted,
     );
+  }
+
+  // 便捷方法：标记为完成
+  LogEntry markAsCompleted() {
+    return copyWith(logStatus: 'completed');
+  }
+
+  // 便捷方法：标记为未完成
+  LogEntry markAsIncomplete() {
+    return copyWith(logStatus: 'pending');
+  }
+
+  // 便捷方法：标记为取消
+  LogEntry markAsCancelled() {
+    return copyWith(logStatus: 'cancelled');
+  }
+
+  // 静态方法：规范化状态值
+  static String _normalizeLogStatus(dynamic status) {
+    if (status == null) return 'pending';
+    final statusStr = status.toString().toLowerCase();
+    switch (statusStr) {
+      case 'completed':
+      case 'done':
+      case 'finished':
+        return 'completed';
+      case 'cancelled':
+      case 'canceled':
+      case 'cancelled':
+        return 'cancelled';
+      case 'pending':
+      case 'in_progress':
+      case 'inprogress':
+      case 'ongoing':
+      case 'active':
+      default:
+        return 'pending';
+    }
   }
 }

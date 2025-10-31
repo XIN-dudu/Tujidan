@@ -9,8 +9,15 @@ import '../widgets/priority_selector.dart';
 
 class LogEditPage extends StatefulWidget {
   final LogEntry? logEntry; // 如果为null则是新建，否则是编辑
+  final String? initialTaskId; // 初始任务ID
+  final TaskPriority? initialPriority; // 初始优先级
 
-  const LogEditPage({super.key, this.logEntry});
+  const LogEditPage({
+    super.key,
+    this.logEntry,
+    this.initialTaskId,
+    this.initialPriority,
+  });
 
   @override
   State<LogEditPage> createState() => _LogEditPageState();
@@ -28,6 +35,7 @@ class _LogEditPageState extends State<LogEditPage> {
   DateTime? _endTime;
   bool _isLoading = false;
   bool _isSaving = false;
+  String _logStatus = 'pending'; // 日志状态：pending, completed, cancelled
   String? _selectedType; // work/study/life/other
   final List<String> _types = const ['work', 'study', 'life', 'other'];
 
@@ -36,6 +44,14 @@ class _LogEditPageState extends State<LogEditPage> {
     super.initState();
     if (widget.logEntry != null) {
       _initializeFromExistingLog();
+    } else {
+      // 如果是新建日志，使用初始值
+      if (widget.initialTaskId != null) {
+        _loadTaskDetails(widget.initialTaskId!);
+      }
+      if (widget.initialPriority != null) {
+        _selectedPriority = widget.initialPriority!;
+      }
     }
   }
 
@@ -48,6 +64,7 @@ class _LogEditPageState extends State<LogEditPage> {
     _selectedTime = log.time;
     _startTime = log.startTime ?? log.time;
     _endTime = log.endTime;
+    _logStatus = log.logStatus;
     
     // 如果有关联任务，需要获取任务详情
     if (log.taskId != null) {
@@ -100,6 +117,7 @@ class _LogEditPageState extends State<LogEditPage> {
         updatedAt: DateTime.now(),
         startTime: _startTime,
         endTime: _endTime,
+        logStatus: _logStatus,
       );
 
       ApiResponse<LogEntry> response;
@@ -360,6 +378,57 @@ class _LogEditPageState extends State<LogEditPage> {
                           }
                         }
                       },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 日志状态选择
+                    Row(
+                      children: [
+                        const Text('日志状态：'),
+                        const SizedBox(width: 12),
+                        DropdownButton<String>(
+                          value: _logStatus,
+                          items: const [
+                            DropdownMenuItem<String>(
+                              value: 'pending',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.radio_button_unchecked, color: Colors.orange, size: 16),
+                                  SizedBox(width: 8),
+                                  Text('进行中'),
+                                ],
+                              ),
+                            ),
+                            DropdownMenuItem<String>(
+                              value: 'completed',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                  SizedBox(width: 8),
+                                  Text('已完成'),
+                                ],
+                              ),
+                            ),
+                            DropdownMenuItem<String>(
+                              value: 'cancelled',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.cancel, color: Colors.red, size: 16),
+                                  SizedBox(width: 8),
+                                  Text('已取消'),
+                                ],
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _logStatus = value;
+                              });
+                            }
+                          },
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 24),
 

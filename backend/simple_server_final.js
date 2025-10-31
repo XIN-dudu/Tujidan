@@ -164,6 +164,58 @@ async function testConnection(retries = 3) {
   console.error('❌ 数据库连接最终失败，请检查网络和配置');
 }
 
+// 数据库迁移：确保log_status字段存在
+async function migrateDatabase() {
+  try {
+    console.log('🔄 检查数据库结构...');
+    const connection = await mysql.createConnection(dbConfig);
+    
+    // 检查logs表是否有log_status字段
+    const [columns] = await connection.execute(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'logs' AND COLUMN_NAME = 'log_status'
+    `, [dbConfig.database]);
+    
+    if (columns.length === 0) {
+      console.log('📝 添加log_status字段到logs表...');
+      await connection.execute(`
+        ALTER TABLE logs 
+        ADD COLUMN log_status VARCHAR(20) DEFAULT 'pending' 
+        COMMENT '日志状态: pending(进行中), completed(已完成), cancelled(已取消)'
+      `);
+      
+      // 更新现有记录的默认状态
+      await connection.execute(`
+        UPDATE logs SET log_status = 'pending' WHERE log_status IS NULL OR log_status = ''
+      `);
+      console.log('✅ log_status字段添加成功');
+    } else {
+      console.log('✅ log_status字段已存在，正在修正其定义...');
+      try {
+        // 强制将列类型从 ENUM (或任何其他类型) 更改为 VARCHAR，并设置默认值
+        await connection.execute(
+          `ALTER TABLE logs CHANGE COLUMN log_status log_status VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending'`
+        );
+        console.log('✅ log_status 字段类型修正成功。');
+
+        // 将所有旧的状态值统一为 'pending'
+        console.log('🔄 统一旧的状态值...');
+        await connection.execute(
+          `UPDATE logs SET log_status = 'pending' WHERE log_status IN ('in_progress', 'not_start', 'paused')`
+        );
+        console.log('✅ 旧状态值统一完成。');
+      } catch (error) {
+        console.error('❌ 修正 log_status 字段时出错:', error.message);
+      }
+    }
+    
+    await connection.end();
+  } catch (error) {
+    console.error('❌ 数据库迁移失败:', error.message);
+  }
+}
+
 // 注册接口
 app.post('/api/register', async (req, res) => {
   try {
@@ -390,27 +442,95 @@ app.get('/api/health', (req, res) => {
 });
 
 // ---- Users（用户搜索） ----
+
+// 获取用户列表
 app.get('/api/users', auth, async (req, res) => {
   try {
     const connection = await getConn();
+    const [rows] = await connection.execute(
+      'SELECT id, username, avatar_url, created_at, updated_at FROM users ORDER BY created_at DESC'
+    );
+    
+    // 格式化用户数据以匹配前端期望
+    const formattedUsers = rows.map(user => ({
+      id: user.id.toString(),
+      username: user.username,
+      avatar_url: user.avatar_url,
+      created_at: user.created_at,
+      updated_at: user.updated_at
+    }));
+    
+    await connection.end();
+    res.json({ success: true, users: formattedUsers });
+  } catch (e) {
+    console.error('获取用户列表失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+// 获取单个任务详情
+app.get('/api/tasks/:id', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    
+    // 获取任务基本信息
+    const [taskRows] = await connection.execute(
+      'SELECT id, task_name AS name, description, priority, status, progress, ' +
+      'plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, ' +
+      'creator_id AS creator_user_id, created_at, updated_at ' +
+      'FROM tasks WHERE id = ? LIMIT 1',
+      [id]
+    );
+
+    if (taskRows.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+
+    // 获取任务的相关日志
+    const [logRows] = await connection.execute(
+      'SELECT * FROM logs WHERE task_id = ? ORDER BY created_at DESC LIMIT 10',
+      [id]
+    );
+
+    const task = taskRows[0];
+    task.logs = logRows;
+
+    await connection.end();
+    res.json({ success: true, data: task });
+  } catch (e) {
+    console.error('获取任务详情失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+app.get('/api/users/search', auth, async (req, res) => {
+  try {
+    const connection = await getConn();
     const keyword = (req.query.keyword || '').toString().trim();
-    let users;
+    let sql, params;
     if (keyword) {
       // 有关键词时，模糊搜索用户名和姓名（仅返回活跃用户）
-      const [userRows] = await connection.execute(
-        'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 AND (username LIKE ? OR real_name LIKE ?) ORDER BY id DESC LIMIT 20',
-        [`%${keyword}%`, `%${keyword}%`]
-      );
-      users = userRows;
+      sql = 'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 AND (username LIKE ? OR real_name LIKE ?) ORDER BY id DESC LIMIT 20';
+      params = [`%${keyword}%`, `%${keyword}%`];
     } else {
       // 没有关键词时，返回所有活跃用户（限制50个）
-      const [userRows] = await connection.execute(
-        'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 ORDER BY id DESC LIMIT 50'
-      );
-      users = userRows;
+      sql = 'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 ORDER BY id DESC LIMIT 50';
+      params = [];
     }
+    // 新增：服务端日志输出，便于定位命中的是用户搜索处理器
+    console.log('[GET /api/users/search] keyword =', keyword);
+    console.log('[GET /api/users/search] sql =', sql);
+    console.log('[GET /api/users/search] params =', params);
+
+    const [userRows] = await connection.execute(sql, params);
+    console.log('[GET /api/users/search] rows.length =', userRows.length);
+    if (userRows.length > 0) {
+      console.log('[GET /api/users/search] sample row =', userRows[0]);
+    }
+
     await connection.end();
-    return res.json({ success: true, users });
+    return res.json({ success: true, users: userRows });
   } catch (e) {
     console.error('查询用户失败:', e);
     return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
@@ -600,7 +720,7 @@ app.get('/api/tasks', auth, async (req, res) => {
                           userRoles.includes('管理员') || 
                           userRoles.includes('领导');
     
-    let sql = 'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks';
+    let sql = 'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id, created_at, updated_at FROM tasks';
     const params = [];
     
     if (isAdminOrLeader) {
@@ -622,9 +742,43 @@ app.get('/api/tasks', auth, async (req, res) => {
     }
     
     sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
+
+    // 新增：服务端日志输出
+    console.log('[GET /api/tasks:list] sql =', sql);
+    console.log('[GET /api/tasks:list] params =', params);
+    console.log('[GET /api/tasks:list] context =', {
+      userId: req.user.id,
+      roles: userRoles,
+      isAdminOrLeader,
+      keyword,
+      limit
+    });
+
     const [rows] = await connection.execute(sql, params);
+    console.log('[GET /api/tasks:list] rows.length =', rows.length);
+    if (rows.length > 0) {
+      console.log('[GET /api/tasks:list] sample row =', rows[0]);
+    }
+
     await connection.end();
-    res.json({ success: true, tasks: rows });
+
+    // 格式化任务数据以匹配前端期望
+    const formattedTasks = rows.map(task => ({
+      id: task.id.toString(),
+      name: task.name,
+      description: task.description,
+      owner_user_id: task.owner_user_id?.toString() ?? '',
+      creator_user_id: task.creator_user_id?.toString() ?? '',
+      due_time: task.due_time,
+      plan_start_time: task.plan_start_time,
+      priority: task.priority,
+      status: task.status,
+      progress: task.progress,
+      created_at: task.created_at,
+      updated_at: task.updated_at
+    }));
+
+    res.json({ success: true, data: formattedTasks });
   } catch (e) {
     console.error('查询任务失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
@@ -838,6 +992,7 @@ app.post('/api/logs', auth, async (req, res) => {
       taskId = null,
       createNewTask = null,
       syncTaskProgress = false,
+      logStatus = 'pending',
     } = req.body;
     if (!content || typeof content !== 'string') {
       return res.status(400).json({ success: false, message: '日志内容不能为空' });
@@ -863,8 +1018,8 @@ app.post('/api/logs', auth, async (req, res) => {
     const endDt = toMySQLDateTime(timeTo);
 
     const [lRes] = await connection.execute(
-      'INSERT INTO logs (author_user_id, title, content, log_type, priority, progress, time_from, time_to, task_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [req.user.id, title, content, type, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId]
+      'INSERT INTO logs (author_user_id, title, content, log_type, priority, progress, time_from, time_to, task_id, log_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [req.user.id, title, content, type, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'pending']
     );
 
     if (syncTaskProgress && finalTaskId) {
@@ -948,6 +1103,7 @@ app.get('/api/logs', auth, async (req, res) => {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         taskId: row.task_id,
+        logStatus: row.log_status, // 关键修复：返回日志状态
       })),
       code: 200,
     });
@@ -976,25 +1132,21 @@ app.get('/api/logs/:id', auth, async (req, res) => {
   }
 });
 
-
-app.get('/api/logs/:id', auth, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const connection = await getConn();
-    const [rows] = await connection.execute('SELECT * FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
-    await connection.end();
-    if (rows.length === 0) return res.status(404).json({ success: false, message: '日志不存在' });
-    res.json({ success: true, log: rows[0] });
-  } catch (e) {
-    console.error('获取日志失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
-  }
-});
-
 app.patch('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false } = req.body;
+    const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false, logStatus } = req.body;
+    
+    console.log(`📝 更新日志 ${id}:`, {
+      logStatus,
+      title,
+      content,
+      type,
+      priority,
+      timeFrom,
+      timeTo,
+      taskId
+    });
     const connection = await getConn();
     const [exists] = await connection.execute('SELECT id, task_id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
     if (exists.length === 0) {
@@ -1002,19 +1154,76 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: '日志不存在' });
     }
     const toNull = (v) => (v === undefined ? null : v);
-    const params = [toNull(title), toNull(content), toNull(type), toNull(priority), toNull(progress), toMySQLDateTime(timeFrom), toMySQLDateTime(timeTo), toNull(taskId), id];
-    await connection.execute(
-      'UPDATE logs SET title = COALESCE(?, title), content = COALESCE(?, content), log_type = COALESCE(?, log_type), priority = COALESCE(?, priority), progress = COALESCE(?, progress), time_from = COALESCE(?, time_from), time_to = COALESCE(?, time_to), task_id = COALESCE(?, task_id) WHERE id = ?',
-      params
-    );
+    
+    // 构建动态更新语句
+    const updates = [];
+    const params = [];
+    
+    if (title !== undefined) {
+      updates.push('title = ?');
+      params.push(title);
+    }
+    if (content !== undefined) {
+      updates.push('content = ?');
+      params.push(content);
+    }
+    if (type !== undefined) {
+      updates.push('log_type = ?');
+      params.push(type);
+    }
+    if (priority !== undefined) {
+      updates.push('priority = ?');
+      params.push(priority);
+    }
+    if (progress !== undefined) {
+      updates.push('progress = ?');
+      params.push(Math.min(Math.max(progress, 0), 100));
+    }
+    if (timeFrom !== undefined) {
+      updates.push('time_from = ?');
+      params.push(toMySQLDateTime(timeFrom));
+    }
+    if (timeTo !== undefined) {
+      updates.push('time_to = ?');
+      params.push(toMySQLDateTime(timeTo));
+    }
+    if (taskId !== undefined) {
+      updates.push('task_id = ?');
+      params.push(taskId);
+    }
+    if (logStatus !== undefined) {
+      const validStatus = ['pending', 'completed', 'cancelled'];
+      let newStatus = logStatus.toLowerCase();
+      if (newStatus === 'in_progress') {
+        newStatus = 'pending';
+      }
+      if (validStatus.includes(newStatus)) {
+        updates.push('log_status = ?');
+        params.push(newStatus);
+      }
+    }
+    
+    if (updates.length > 0) {
+      params.push(id);
+      await connection.execute(
+        `UPDATE logs SET ${updates.join(', ')} WHERE id = ?`,
+        params
+      );
+    }
     if (syncTaskProgress && (taskId || exists[0].task_id)) {
       const targetTaskId = taskId || exists[0].task_id;
-      if (typeof progress === 'number' || typeof priority === 'string') {
-        await connection.execute('UPDATE tasks SET progress = COALESCE(?, progress), priority = COALESCE(?, priority) WHERE id = ?', [progress, priority, targetTaskId]);
+      if (typeof progress === 'number') { // 只在 progress 是数字时才更新
+        await connection.execute('UPDATE tasks SET progress = COALESCE(?, progress) WHERE id = ?', [progress, targetTaskId]);
       }
     }
     const [rows] = await connection.execute('SELECT * FROM logs WHERE id = ?', [id]);
     await connection.end();
+    
+    console.log(`✅ 日志 ${id} 更新完成:`, {
+      log_status: rows[0]?.log_status,
+      title: rows[0]?.title
+    });
+    
     res.json({ success: true, log: rows[0] });
   } catch (e) {
     console.error('更新日志失败:', e);
@@ -1036,8 +1245,9 @@ app.delete('/api/logs/:id', auth, async (req, res) => {
 });
 
 // 启动服务器
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 服务器运行在 http://localhost:${PORT}`);
   console.log(`📊 健康检查: http://localhost:${PORT}/api/health`);
-  testConnection();
+  await testConnection();
+  await migrateDatabase();
 });
