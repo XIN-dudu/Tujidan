@@ -61,7 +61,7 @@ class TaskService {
 
   // 更新任务进度
   static Future<ApiResponse<Task>> updateTaskProgress(String taskId, int progress) async {
-    return await ApiClient.put<Task>(
+    return await ApiClient.patch<Task>(
       '/tasks/$taskId/progress',
       body: {'progress': progress},
       fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),

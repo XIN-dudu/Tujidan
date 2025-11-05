@@ -99,6 +99,47 @@ class _LogListPageState extends State<LogListPage> {
     }
   }
 
+  Map<String, dynamic> _getStatusInfo(String status) {
+    switch (status) {
+      case 'pending':
+        return {
+          'text': '待处理',
+          'color': Colors.grey,
+          'icon': Icons.pending_actions,
+        };
+      case 'in_progress':
+      case 'inprogress':
+      case 'ongoing':
+      case 'active':
+        return {
+          'text': '进行中',
+          'color': Colors.blue,
+          'icon': Icons.directions_run,
+        };
+      case 'completed':
+      case 'done':
+      case 'finished':
+        return {
+          'text': '已完成',
+          'color': Colors.green,
+          'icon': Icons.check_circle,
+        };
+      case 'cancelled':
+      case 'canceled':
+        return {
+          'text': '已取消',
+          'color': Colors.red,
+          'icon': Icons.cancel,
+        };
+      default:
+        return {
+          'text': '未知',
+          'color': Colors.black,
+          'icon': Icons.help_outline,
+        };
+    }
+  }
+
   Future<void> _pickStartTime() async {
     final picked = await showDatePicker(
       context: context,
@@ -461,6 +502,25 @@ class _LogListPageState extends State<LogListPage> {
                                     style: const TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.w500),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        _getStatusInfo(log.logStatus)['icon'],
+                                        size: 16,
+                                        color: _getStatusInfo(log.logStatus)['color'],
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _getStatusInfo(log.logStatus)['text'],
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: _getStatusInfo(log.logStatus)['color'],
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(height: 8),
                                   Row(

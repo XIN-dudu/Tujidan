@@ -25,9 +25,7 @@ class Task {
     required this.updatedAt,
   });
 
-  factory Task.fromJson(Map<String, dynamic> json) {
-    print('[Task.fromJson] Raw JSON: $json');
-    return Task(
+  factory Task.fromJson(Map<String, dynamic> json) {  return Task(
       id: (json['id'] ?? '').toString(),
       name: json['name'] ?? '',
       description: json['description'] ?? '',
@@ -46,18 +44,22 @@ class Task {
   }
 
   static TaskStatus _mapStatus(dynamic v) {
-    final s = (v ?? '').toString();
+    final s = (v ?? '').toString().toLowerCase().replaceAll('_', '');
     switch (s) {
-      case 'in_progress':
-        return TaskStatus.inProgress;
+      case 'notstarted':
+        return TaskStatus.not_started;
+      case 'inprogress':
+        return TaskStatus.in_progress;
+      case 'paused':
+        return TaskStatus.paused;
       case 'completed':
         return TaskStatus.completed;
+      case 'closed':
+        return TaskStatus.closed;
       case 'cancelled':
         return TaskStatus.cancelled;
-      case 'pending':
-      case 'not_started':
       default:
-        return TaskStatus.pending;
+        return TaskStatus.not_started;
     }
   }
 
@@ -116,9 +118,11 @@ enum TaskPriority {
 }
 
 enum TaskStatus {
-  pending('待开始'),
-  inProgress('进行中'),
+  not_started('未开始'),
+  in_progress('进行中'),
+  paused('已暂停'),
   completed('已完成'),
+  closed('已关闭'),
   cancelled('已取消');
 
   const TaskStatus(this.displayName);

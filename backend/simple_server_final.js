@@ -743,22 +743,7 @@ app.get('/api/tasks', auth, async (req, res) => {
     
     sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
 
-    // 新增：服务端日志输出
-    console.log('[GET /api/tasks:list] sql =', sql);
-    console.log('[GET /api/tasks:list] params =', params);
-    console.log('[GET /api/tasks:list] context =', {
-      userId: req.user.id,
-      roles: userRoles,
-      isAdminOrLeader,
-      keyword,
-      limit
-    });
-
     const [rows] = await connection.execute(sql, params);
-    console.log('[GET /api/tasks:list] rows.length =', rows.length);
-    if (rows.length > 0) {
-      console.log('[GET /api/tasks:list] sample row =', rows[0]);
-    }
 
     await connection.end();
 
@@ -869,6 +854,114 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
     res.json({ success: true, task: rows[0] });
   } catch (e) {
     console.error('更新任务失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+// 根据进度决定任务状态
+function getTaskStatusFromProgress(progress) {
+  if (progress <= 0) {
+    return 'not_started';
+  } else if (progress > 0 && progress < 100) {
+    return 'in_progress';
+  } else {
+    return 'completed';
+  }
+}
+
+// 更新任务进度
+app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { progress } = req.body;
+
+    if (typeof progress !== 'number' || progress < 0 || progress > 100) {
+      return res.status(400).json({ success: false, message: '进度值必须是0-100的数字' });
+    }
+
+    const connection = await getConn();
+
+    // 检查任务是否存在以及用户是否有权限更新
+    const [tasks] = await connection.execute('SELECT id, assignee_id, creator_id FROM tasks WHERE id = ?', [id]);
+    if (tasks.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+
+    const task = tasks[0];
+    // 只有负责人或创建者可以更新进度
+    if (task.assignee_id !== req.user.id && task.creator_id !== req.user.id) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '无权更新此任务的进度' });
+    }
+
+    const newStatus = getTaskStatusFromProgress(progress);
+
+    await connection.execute(
+      'UPDATE tasks SET progress = ?, status = ? WHERE id = ?',
+      [progress, newStatus, id]
+    );
+
+    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    await connection.end();
+
+    res.json({ success: true, task: rows[0] });
+  } catch (e) {
+    console.error('更新任务进度失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+// 根据进度决定任务状态
+function getTaskStatusFromProgress(progress) {
+  if (progress <= 0) {
+    return 'not_started';
+  } else if (progress > 0 && progress < 100) {
+    return 'in_progress';
+  } else {
+    return 'completed';
+  }
+}
+
+// 更新任务进度
+app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { progress } = req.body;
+
+    if (typeof progress !== 'number' || progress < 0 || progress > 100) {
+      return res.status(400).json({ success: false, message: '进度值必须是0-100的数字' });
+    }
+
+    const connection = await getConn();
+
+    // 检查任务是否存在以及用户是否有权限更新
+    const [tasks] = await connection.execute('SELECT id, assignee_id, creator_id FROM tasks WHERE id = ?', [id]);
+    if (tasks.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+
+    const task = tasks[0];
+    // 只有负责人或创建者可以更新进度
+    if (task.assignee_id !== req.user.id && task.creator_id !== req.user.id) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '无权更新此任务的进度' });
+    }
+
+    const newStatus = getTaskStatusFromProgress(progress);
+
+    await connection.execute(
+      'UPDATE tasks SET progress = ?, status = ? WHERE id = ?',
+      [progress, newStatus, id]
+    );
+
+    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    await connection.end();
+
+    res.json({ success: true, task: rows[0] });
+  } catch (e) {
+    console.error('更新任务进度失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
   }
 });

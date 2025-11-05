@@ -53,10 +53,8 @@ class _TaskViewPageState extends State<TaskViewPage> {
       MaterialPageRoute(builder: (_) => TaskEditPage(task: _task)),
     );
     if (changed == true) {
-      // 重新加载任务数据
-      await _reloadTask();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('任务已更新')));
+        Navigator.of(context).pop(true);
       }
     }
   }
@@ -123,10 +121,10 @@ class _TaskViewPageState extends State<TaskViewPage> {
   Widget build(BuildContext context) {
     // 判断当前用户是否是任务接收者
     final bool isAssignee = _task.assignee.isNotEmpty && 
-                            (_task.status == TaskStatus.inProgress || _task.status == TaskStatus.completed);
+                            (_task.status == TaskStatus.in_progress || _task.status == TaskStatus.completed);
     
     // 判断任务是否已分配：状态为not_started且assignee_id不为空
-    final bool isPublished = _task.status == TaskStatus.pending && _task.assignee.isNotEmpty;
+    final bool isPublished = _task.status == TaskStatus.not_started && _task.assignee.isNotEmpty;
     
     return Scaffold(
       appBar: AppBar(title: const Text('任务详情')),

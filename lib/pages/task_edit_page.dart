@@ -22,6 +22,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
   DateTime? _due;
   DateTime? _planStart;
   TaskPriority _priority = TaskPriority.low;
+  double _progress = 0;
   bool _saving = false;
 
   @override
@@ -34,6 +35,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
       _due = widget.task!.deadline;
       _planStart = widget.task!.plannedStart;
       _priority = widget.task!.priority;
+      _progress = widget.task!.progress.toDouble();
     }
   }
 
@@ -57,7 +59,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
       deadline: _due ?? now,
       plannedStart: _planStart,
       priority: _priority,
-      status: widget.task?.status ?? TaskStatus.pending,
+      status: widget.task?.status ?? TaskStatus.not_started,
       progress: widget.task?.progress ?? 0,
       createdAt: widget.task?.createdAt ?? now,
       updatedAt: now,
@@ -78,6 +80,12 @@ class _TaskEditPageState extends State<TaskEditPage> {
     if (!mounted) return;
     setState(() => _saving = false);
     if (res.success) {
+      // The original instruction was to pop with `true`, which is already done.
+      // However, the failed block suggests a SnackBar was intended for success cases.
+      // Adding it for better UX consistency.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('进度更新成功')),
+      );
       Navigator.of(context).pop(true);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
@@ -87,6 +95,19 @@ class _TaskEditPageState extends State<TaskEditPage> {
   Future<void> _pickDue() async {
     final d = await showDatePicker(context: context, initialDate: _due ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
     if (d != null) setState(() => _due = d);
+  }
+
+  Future<void> _updateProgress() async {
+    if (widget.task == null) return;
+    setState(() => _saving = true);
+    final res = await TaskService.updateTaskProgress(widget.task!.id, _progress.round());
+    if (!mounted) return;
+    setState(() => _saving = false);
+    if (res.success) {
+      Navigator.of(context).pop(true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
+    }
   }
 
   Future<void> _pickPlanStart() async {
@@ -164,6 +185,23 @@ class _TaskEditPageState extends State<TaskEditPage> {
                   onTap: _pickDue,
                 ),
                 const SizedBox(height: 16),
+                if (widget.task != null) ...[
+                  const Text('任务进度'),
+                  Slider(
+                    value: _progress,
+                    min: 0,
+                    max: 100,
+                    divisions: 100,
+                    label: '${_progress.round()}%',
+                    onChanged: (value) {
+                      setState(() {
+                        _progress = value;
+                      });
+                    },
+                  ),
+                  Text('当前进度: ${_progress.round()}%'),
+                  const SizedBox(height: 12),
+                ],
                 if (widget.task == null) ...[
                   // 创建任务时显示两个按钮
                   ElevatedButton(
@@ -193,6 +231,17 @@ class _TaskEditPageState extends State<TaskEditPage> {
                         : const Text('保存修改'),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: _saving ? null : _updateProgress,
+                    child: _saving
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('更新进度'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      backgroundColor: Colors.green,
                     ),
                   ),
                 ],
