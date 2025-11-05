@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/log_entry.dart';
 import '../models/task.dart';
 import '../services/log_service.dart';
+import '../services/task_service.dart';
 
 enum ViewType { month, week, day }
 
@@ -19,6 +20,7 @@ class _LogViewPageState extends State<LogViewPage> {
   DateTime _currentDate = DateTime.now();
   DateTime? _selectedDate; // 选中的日期
   List<LogEntry> _logs = [];
+  List<Task> _tasks = [];
   bool _isLoading = false;
 
   @override
@@ -84,23 +86,26 @@ class _LogViewPageState extends State<LogViewPage> {
           break;
       }
 
-      final response = await LogService.getLogsFiltered(
+      final logResp = await LogService.getLogsFiltered(
         startTime: startDate,
         endTime: endDate,
       );
+      final taskResp = await TaskService.getTasks();
 
-      if (response.success && response.data != null) {
-        setState(() {
-          _logs = response.data!;
-          _isLoading = false;
-        });
-      } else {
-        setState(() => _isLoading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('加载日志失败: ${response.message}')),
-          );
-        }
+      setState(() {
+        _logs = logResp.success && logResp.data != null ? logResp.data! : [];
+        _tasks = taskResp.success && taskResp.data != null ? taskResp.data! : [];
+        _isLoading = false;
+      });
+      if (!logResp.success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载日志失败: ${logResp.message}')),
+        );
+      }
+      if (!taskResp.success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载任务失败: ${taskResp.message}')),
+        );
       }
     } catch (e) {
       setState(() => _isLoading = false);
@@ -319,13 +324,17 @@ class _LogViewPageState extends State<LogViewPage> {
     // 添加日期单元格
     for (int day = 1; day <= daysInMonth; day++) {
       final date = DateTime(_currentDate.year, _currentDate.month, day);
-      final dayLogs = _logs.where((log) => 
-        log.time.year == date.year && 
-        log.time.month == date.month && 
+      final dayLogs = _logs.where((log) =>
+        log.time.year == date.year &&
+        log.time.month == date.month &&
         log.time.day == date.day
       ).toList();
-      
-      calendarCells.add(_buildCalendarCell(day, dayLogs, date));
+      final dayTasks = _tasks.where((task) =>
+        task.deadline.year == date.year &&
+        task.deadline.month == date.month &&
+        task.deadline.day == date.day
+      ).toList();
+      calendarCells.add(_buildCalendarCell(day, dayLogs, date, dayTasks));
     }
     
     return Column(
@@ -350,7 +359,7 @@ class _LogViewPageState extends State<LogViewPage> {
     );
   }
 
-  Widget _buildCalendarCell(int day, List<LogEntry> dayLogs, DateTime date) {
+  Widget _buildCalendarCell(int day, List<LogEntry> dayLogs, DateTime date, List<Task> dayTasks) {
     final isToday = date.day == DateTime.now().day && 
                    date.month == DateTime.now().month && 
                    date.year == DateTime.now().year;
@@ -359,10 +368,14 @@ class _LogViewPageState extends State<LogViewPage> {
                       _selectedDate!.month == date.month &&
                       _selectedDate!.year == date.year;
     
-    // 获取该日期的最高优先级日志
+    // 获取该日期的最高优先级日志或任务
     TaskPriority? highestPriority;
-    if (dayLogs.isNotEmpty) {
-      highestPriority = dayLogs.map((log) => log.priority).reduce((a, b) {
+    final priorities = [
+      ...dayLogs.map((log) => log.priority),
+      ...dayTasks.map((task) => task.priority),
+    ];
+    if (priorities.isNotEmpty) {
+      highestPriority = priorities.reduce((a, b) {
         if (a == TaskPriority.high || b == TaskPriority.high) return TaskPriority.high;
         if (a == TaskPriority.medium || b == TaskPriority.medium) return TaskPriority.medium;
         return TaskPriority.low;
@@ -378,14 +391,14 @@ class _LogViewPageState extends State<LogViewPage> {
     
     if (isSelected) {
       // 选中状态：明显的主题色
-      backgroundColor = Theme.of(context).colorScheme.primary.withOpacity(0.2);
+      backgroundColor = Theme.of(context).colorScheme.primary.withValues(alpha: (0.2));
       borderColor = Theme.of(context).colorScheme.primary;
       borderWidth = 2;
       fontWeight = FontWeight.bold;
       textColor = Theme.of(context).colorScheme.primary;
     } else if (isToday && _selectedDate == null) {
       // 今天状态：只有在没有选中其他日期时才高亮
-      backgroundColor = Theme.of(context).colorScheme.primary.withOpacity(0.1);
+      backgroundColor = Theme.of(context).colorScheme.primary.withValues(alpha: (0.1));
       borderColor = Theme.of(context).colorScheme.primary;
       borderWidth = 2;
       fontWeight = FontWeight.bold;
@@ -441,6 +454,23 @@ class _LogViewPageState extends State<LogViewPage> {
                   ),
                 ),
               ),
+            // 任务数量 - 固定在左下角
+            if (dayTasks.isNotEmpty)
+              Positioned(
+                bottom: 4,
+                left: 4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '${dayTasks.length}任务',
+                    style: const TextStyle(fontSize: 10, color: Colors.blue),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -458,20 +488,25 @@ class _LogViewPageState extends State<LogViewPage> {
           log.time.month == day.month && 
           log.time.day == day.day
         ).toList();
+        final dayTasks = _tasks.where((task) =>
+          task.deadline.year == day.year &&
+          task.deadline.month == day.month &&
+          task.deadline.day == day.day
+        ).toList();
         
-        return _buildWeekDayCard(day, dayLogs);
+        return _buildWeekDayCard(day, dayLogs, dayTasks);
       }).toList(),
     );
   }
 
-  Widget _buildWeekDayCard(DateTime day, List<LogEntry> dayLogs) {
+  Widget _buildWeekDayCard(DateTime day, List<LogEntry> dayLogs, List<Task> dayTasks) {
     final isToday = day.day == DateTime.now().day && 
                    day.month == DateTime.now().month && 
                    day.year == DateTime.now().year;
     
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      color: isToday ? Theme.of(context).colorScheme.primary.withOpacity(0.05) : Colors.white,
+      color: isToday ? Theme.of(context).colorScheme.primary.withValues(alpha: (0.05)) : Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -496,27 +531,48 @@ class _LogViewPageState extends State<LogViewPage> {
                   ),
                 ),
                 const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${dayLogs.length}条日志',
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[200],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${dayLogs.length}条日志',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${dayTasks.length}个任务',
+                        style: const TextStyle(fontSize: 12, color: Colors.blue),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            if (dayLogs.isEmpty)
+            if (dayLogs.isEmpty && dayTasks.isEmpty)
               const Text(
-                '暂无日志',
+                '暂无日志与任务',
                 style: TextStyle(color: Colors.grey, fontSize: 14),
               )
-            else
-              ...dayLogs.map((log) => _buildLogItem(log)),
+            else ...[
+              if (dayLogs.isNotEmpty) ...dayLogs.map((log) => _buildLogItem(log)),
+              if (dayTasks.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ...dayTasks.map((task) => _buildTaskItem(task)),
+              ],
+            ],
           ],
         ),
       ),
@@ -529,8 +585,13 @@ class _LogViewPageState extends State<LogViewPage> {
       log.time.month == _currentDate.month && 
       log.time.day == _currentDate.day
     ).toList();
+    final dayTasks = _tasks.where((task) =>
+      task.deadline.year == _currentDate.year &&
+      task.deadline.month == _currentDate.month &&
+      task.deadline.day == _currentDate.day
+    ).toList();
     
-    if (dayLogs.isEmpty) {
+    if (dayLogs.isEmpty && dayTasks.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -538,7 +599,7 @@ class _LogViewPageState extends State<LogViewPage> {
             Icon(Icons.article_outlined, size: 64, color: Colors.grey),
             SizedBox(height: 16),
             Text(
-              '今日暂无日志',
+              '今日暂无日志与任务',
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
           ],
@@ -547,7 +608,116 @@ class _LogViewPageState extends State<LogViewPage> {
     }
     
     return Column(
-      children: dayLogs.map((log) => _buildLogItem(log)).toList(),
+      children: [
+        ...dayLogs.map((log) => _buildLogItem(log)),
+        if (dayTasks.isNotEmpty) const SizedBox(height: 8),
+        ...dayTasks.map((task) => _buildTaskItem(task)),
+      ],
+    );
+  }
+
+  Widget _buildTaskItem(Task task) {
+    Color statusColor;
+    IconData statusIcon;
+    switch (task.status) {
+      case TaskStatus.completed:
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        break;
+      case TaskStatus.cancelled:
+      case TaskStatus.closed:
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        break;
+      case TaskStatus.paused:
+        statusColor = Colors.grey;
+        statusIcon = Icons.pause_circle_filled;
+        break;
+      case TaskStatus.in_progress:
+        statusColor = Colors.orange;
+        statusIcon = Icons.timelapse;
+        break;
+      case TaskStatus.not_started:
+        statusColor = Colors.blueGrey;
+        statusIcon = Icons.radio_button_unchecked;
+        break;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          width: 4,
+          color: _getPriorityColor(task.priority),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        '任务',
+                        style: TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        task.name.isNotEmpty ? task.name : task.description,
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(statusIcon, size: 14, color: statusColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      task.status.displayName,
+                      style: TextStyle(fontSize: 12, color: statusColor, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 12),
+                    Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${task.deadline.hour.toString().padLeft(2, '0')}:${task.deadline.minute.toString().padLeft(2, '0')}',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(width: 12),
+                    Icon(Icons.flag, size: 14, color: _getPriorityColor(task.priority)),
+                    const SizedBox(width: 4),
+                    Text(
+                      task.priority.displayName,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _getPriorityColor(task.priority),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -667,7 +837,7 @@ class _LogViewPageState extends State<LogViewPage> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: Colors.grey.withValues(alpha: (0.1)),
             spreadRadius: 1,
             blurRadius: 4,
             offset: const Offset(0, -2),
@@ -695,7 +865,7 @@ class _LogViewPageState extends State<LogViewPage> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  color: Theme.of(context).colorScheme.primary.withValues(alpha: (0.1)),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
@@ -734,7 +904,7 @@ class _LogViewPageState extends State<LogViewPage> {
                         color: Colors.grey[50],
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                          color: _getPriorityColor(log.priority).withOpacity(0.3),
+                          color: _getPriorityColor(log.priority).withValues(alpha: (0.3)),
                           width: 1,
                         ),
                       ),
