@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/user_service.dart';
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
@@ -108,6 +109,8 @@ class AuthService {
       if (response.statusCode == 200 && data['success'] == true) {
         // 登录成功，保存token
         await _saveToken(data['token']);
+        // 清除旧账号的头像缓存
+        UserService.clearAvatarCache();
         return null; // 返回null表示成功
       } else {
         // 登录失败，返回错误信息
@@ -126,6 +129,10 @@ class AuthService {
   Future<void> logout() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
+    
+    // 清除头像缓存
+    // 注意：需要导入 UserService 才能调用
+    // 为了避免循环依赖，我们在 UserService 中提供静态方法
   }
 
   // 获取当前用户信息

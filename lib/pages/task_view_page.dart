@@ -17,6 +17,7 @@ class _TaskViewPageState extends State<TaskViewPage> {
   late Task _task;
   bool _working = false;
   bool _canEdit = false;
+  bool _canEditProgress = false; // 只能编辑进度的权限
   bool _canDelete = false;
   bool _canPublish = false;
   bool _canAccept = false;
@@ -55,8 +56,11 @@ class _TaskViewPageState extends State<TaskViewPage> {
     setState(() {
       _currentUserId = currentUserId;
       
-      // 编辑权限：founder/admin可以编辑任何任务，dept_head只能编辑自己创建的，staff不能编辑
+      // 编辑权限：founder/admin可以编辑任何任务，dept_head只能编辑自己创建的
       _canEdit = isFounderOrAdmin || (isDeptHead && isCreator);
+      
+      // 编辑进度权限：被分配方（非创建者）可以编辑任务进度
+      _canEditProgress = isAssignee && !isCreator;
       
       // 删除权限：founder/admin可以删除任何任务，dept_head只能删除自己创建的，staff不能删除
       _canDelete = isFounderOrAdmin || (isDeptHead && isCreator);
@@ -83,7 +87,11 @@ class _TaskViewPageState extends State<TaskViewPage> {
 
   Future<void> _edit() async {
     final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => TaskEditPage(task: _task)),
+      MaterialPageRoute(builder: (_) => TaskEditPage(
+        task: _task,
+        canEditAll: _canEdit, // 传递是否可以编辑所有字段
+        canEditProgressOnly: _canEditProgress, // 传递是否只能编辑进度
+      )),
     );
     if (changed == true) {
       if (mounted) {
@@ -336,17 +344,17 @@ class _TaskViewPageState extends State<TaskViewPage> {
                 Text(_task.description),
               ],
               const SizedBox(height: 24),
-              // 编辑按钮（只有管理员/领导可见）
-              if (_canEdit)
+              // 编辑按钮（创建者/管理员/领导可见，或被分配方可见）
+              if (_canEdit || _canEditProgress)
                 ElevatedButton.icon(
                   onPressed: _working ? null : _edit,
                   icon: const Icon(Icons.edit),
-                  label: const Text('编辑任务'),
+                  label: Text(_canEdit ? '编辑任务' : '更新进度'),
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(double.infinity, 48),
                   ),
                 ),
-              if (_canEdit) const SizedBox(height: 12),
+              if (_canEdit || _canEditProgress) const SizedBox(height: 12),
               // 根据权限和状态显示不同按钮
               if (_canCancelAccept)
                 // 已接收任务，显示取消接收按钮（只有有权限的用户可见）

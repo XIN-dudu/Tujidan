@@ -7,7 +7,14 @@ import '../services/api_client.dart';
 
 class TaskEditPage extends StatefulWidget {
   final Task? task;
-  const TaskEditPage({super.key, this.task});
+  final bool canEditAll; // 是否可以编辑所有字段
+  final bool canEditProgressOnly; // 是否只能编辑进度
+  const TaskEditPage({
+    super.key, 
+    this.task,
+    this.canEditAll = true,
+    this.canEditProgressOnly = false,
+  });
 
   @override
   State<TaskEditPage> createState() => _TaskEditPageState();
@@ -22,6 +29,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
   DateTime? _due;
   DateTime? _planStart;
   TaskPriority _priority = TaskPriority.low;
+  TaskStatus _status = TaskStatus.not_started;
   double _progress = 0;
   bool _saving = false;
 
@@ -35,6 +43,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
       _due = widget.task!.deadline;
       _planStart = widget.task!.plannedStart;
       _priority = widget.task!.priority;
+      _status = widget.task!.status;
       _progress = widget.task!.progress.toDouble();
     }
   }
@@ -60,8 +69,8 @@ class _TaskEditPageState extends State<TaskEditPage> {
       deadline: _due ?? now,
       plannedStart: _planStart,
       priority: _priority,
-      status: widget.task?.status ?? TaskStatus.not_started,
-      progress: widget.task?.progress ?? 0,
+      status: _status,
+      progress: _progress.round(),
       createdAt: widget.task?.createdAt ?? now,
       updatedAt: now,
     );
@@ -101,10 +110,21 @@ class _TaskEditPageState extends State<TaskEditPage> {
   Future<void> _updateProgress() async {
     if (widget.task == null) return;
     setState(() => _saving = true);
+    
+    // 如果进度为100%，自动设置状态为"已完成"
+    if (_progress.round() == 100) {
+      _status = TaskStatus.completed;
+    }
+    
     final res = await TaskService.updateTaskProgress(widget.task!.id, _progress.round());
     if (!mounted) return;
     setState(() => _saving = false);
     if (res.success) {
+      // 如果状态已改变，更新任务状态
+      if (_status != widget.task!.status) {
+        final updatedTask = widget.task!.copyWith(status: _status);
+        await TaskService.updateTask(updatedTask);
+      }
       Navigator.of(context).pop(true);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
@@ -128,66 +148,83 @@ class _TaskEditPageState extends State<TaskEditPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                TextFormField(
-                  controller: _name,
-                  decoration: const InputDecoration(labelText: '任务名称', border: OutlineInputBorder()),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? '请输入任务名称' : null,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _desc,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: '任务描述', border: OutlineInputBorder(), hintText: '可填写任务背景、目标等'),
-                ),
-                const SizedBox(height: 12),
-                Row(children: [
-                  const Text('优先级：'),
-                  const SizedBox(width: 8),
-                  DropdownButton<TaskPriority>(
-                    value: _priority,
-                    items: TaskPriority.values
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e.displayName)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _priority = v ?? TaskPriority.low),
+                // 如果只能编辑进度，隐藏其他字段
+                if (!widget.canEditProgressOnly) ...[
+                  TextFormField(
+                    controller: _name,
+                    decoration: const InputDecoration(labelText: '任务名称', border: OutlineInputBorder()),
+                    validator: (v) => (v == null || v.trim().isEmpty) ? '请输入任务名称' : null,
+                    enabled: widget.canEditAll,
                   ),
-                ]),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _assignee,
-                  readOnly: true,
-                  decoration: const InputDecoration(labelText: '负责人（搜索用户名/姓名）', border: OutlineInputBorder()),
-                  onTap: () async {
-                    final Map<String, String>? picked = await showDialog<Map<String, String>>(
-                      context: context,
-                      builder: (context) => const _UserPickerDialog(),
-                    );
-                    if (picked != null) {
-                      setState(() {
-                        _assigneeId = picked['id'];
-                        _assignee.text = picked['name'] ?? '';
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('计划开始时间'),
-                  subtitle: Text(_planStart == null ? '未选择' : '${_planStart!.year}-${_planStart!.month.toString().padLeft(2, '0')}-${_planStart!.day.toString().padLeft(2, '0')}'),
-                  trailing: const Icon(Icons.event),
-                  onTap: _pickPlanStart,
-                ),
-                const SizedBox(height: 6),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('计划截止时间'),
-                  subtitle: Text(_due == null ? '未选择' : '${_due!.year}-${_due!.month.toString().padLeft(2, '0')}-${_due!.day.toString().padLeft(2, '0')}'),
-                  trailing: const Icon(Icons.event),
-                  onTap: _pickDue,
-                ),
-                const SizedBox(height: 16),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _desc,
+                    maxLines: 3,
+                    decoration: const InputDecoration(labelText: '任务描述', border: OutlineInputBorder(), hintText: '可填写任务背景、目标等'),
+                    enabled: widget.canEditAll,
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    const Text('优先级：'),
+                    const SizedBox(width: 8),
+                    DropdownButton<TaskPriority>(
+                      value: _priority,
+                      items: TaskPriority.values
+                          .map((e) => DropdownMenuItem(value: e, child: Text(e.displayName)))
+                          .toList(),
+                      onChanged: widget.canEditAll ? (v) => setState(() => _priority = v ?? TaskPriority.low) : null,
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    const Text('任务状态：'),
+                    const SizedBox(width: 8),
+                    DropdownButton<TaskStatus>(
+                      value: _status,
+                      items: TaskStatus.values
+                          .map((e) => DropdownMenuItem(value: e, child: Text(e.displayName)))
+                          .toList(),
+                      onChanged: widget.canEditAll ? (v) => setState(() => _status = v ?? TaskStatus.not_started) : null,
+                    ),
+                  ]),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _assignee,
+                    readOnly: true,
+                    decoration: const InputDecoration(labelText: '负责人（搜索用户名/姓名）', border: OutlineInputBorder()),
+                    onTap: widget.canEditAll ? () async {
+                      final Map<String, String>? picked = await showDialog<Map<String, String>>(
+                        context: context,
+                        builder: (context) => const _UserPickerDialog(),
+                      );
+                      if (picked != null) {
+                        setState(() {
+                          _assigneeId = picked['id'];
+                          _assignee.text = picked['name'] ?? '';
+                        });
+                      }
+                    } : null,
+                  ),
+                  const SizedBox(height: 12),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('计划开始时间'),
+                    subtitle: Text(_planStart == null ? '未选择' : '${_planStart!.year}-${_planStart!.month.toString().padLeft(2, '0')}-${_planStart!.day.toString().padLeft(2, '0')}'),
+                    trailing: const Icon(Icons.event),
+                    onTap: widget.canEditAll ? _pickPlanStart : null,
+                  ),
+                  const SizedBox(height: 6),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('计划截止时间'),
+                    subtitle: Text(_due == null ? '未选择' : '${_due!.year}-${_due!.month.toString().padLeft(2, '0')}-${_due!.day.toString().padLeft(2, '0')}'),
+                    trailing: const Icon(Icons.event),
+                    onTap: widget.canEditAll ? _pickDue : null,
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 if (widget.task != null) ...[
-                  const Text('任务进度'),
+                  const Text('任务进度', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   Slider(
                     value: _progress,
                     min: 0,
@@ -197,6 +234,10 @@ class _TaskEditPageState extends State<TaskEditPage> {
                     onChanged: (value) {
                       setState(() {
                         _progress = value;
+                        // 当进度为100%时，自动设置状态为"已完成"
+                        if (_progress.round() == 100) {
+                          _status = TaskStatus.completed;
+                        }
                       });
                     },
                   ),
@@ -224,27 +265,42 @@ class _TaskEditPageState extends State<TaskEditPage> {
                     ),
                   ),
                 ] else ...[
-                  // 编辑任务时只显示保存按钮
-                  ElevatedButton(
-                    onPressed: _saving ? null : () => _save(publish: false),
-                    child: _saving
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('保存修改'),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 48),
+                  // 编辑任务时，根据权限显示不同按钮
+                  if (widget.canEditProgressOnly) ...[
+                    // 只能编辑进度时，只显示更新进度按钮
+                    ElevatedButton(
+                      onPressed: _saving ? null : _updateProgress,
+                      child: _saving
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('更新进度'),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 48),
+                        backgroundColor: Colors.green,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton(
-                    onPressed: _saving ? null : _updateProgress,
-                    child: _saving
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('更新进度'),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 48),
-                      backgroundColor: Colors.green,
+                  ] else ...[
+                    // 可以编辑所有字段时，显示保存和更新进度按钮
+                    ElevatedButton(
+                      onPressed: _saving ? null : () => _save(publish: false),
+                      child: _saving
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('保存修改'),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 48),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                    ElevatedButton(
+                      onPressed: _saving ? null : _updateProgress,
+                      child: _saving
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('更新进度'),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 48),
+                        backgroundColor: Colors.green,
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),

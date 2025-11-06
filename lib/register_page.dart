@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:test_flutter/auth_service.dart';
+import 'package:test_flutter/main.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -50,7 +51,11 @@ class _RegisterPageState extends State<RegisterPage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
       return;
     }
-    Navigator.of(context).pop();
+    // 注册成功，直接进入主页（因为已经保存了token）
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const HomePage()),
+      (route) => false,
+    );
   }
 
   @override

@@ -3,6 +3,9 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -10,6 +13,67 @@ const PORT = process.env.PORT || 3001;
 // 中间件
 app.use(cors());
 app.use(express.json());
+
+// 确保上传目录存在
+const uploadsDir = path.join(__dirname, 'uploads', 'avatars');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// 配置 multer 用于文件上传
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'avatar-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB
+  },
+  fileFilter: (req, file, cb) => {
+    // 允许的文件扩展名
+    const allowedExts = ['.jpeg', '.jpg', '.png', '.gif', '.webp'];
+    // 允许的 MIME 类型（支持多种可能的格式）
+    const allowedMimeTypes = [
+      'image/jpeg', 
+      'image/jpg', 
+      'image/png', 
+      'image/gif', 
+      'image/webp',
+      'image/x-png',  // 某些客户端可能发送这个
+      'image/pjpeg'   // 某些客户端可能发送这个
+    ];
+    
+    const ext = path.extname(file.originalname).toLowerCase();
+    const mimetype = file.mimetype ? file.mimetype.toLowerCase() : '';
+    
+    // 检查扩展名或 MIME 类型（只要有一个匹配即可）
+    const isValidExt = allowedExts.includes(ext);
+    const isValidMime = mimetype && (allowedMimeTypes.includes(mimetype) || mimetype.startsWith('image/'));
+    
+    if (isValidExt || isValidMime) {
+      return cb(null, true);
+    } else {
+      console.log('文件验证失败:', { 
+        filename: file.originalname, 
+        ext, 
+        mimetype: file.mimetype,
+        isValidExt,
+        isValidMime
+      });
+      cb(new Error('只允许上传图片文件 (jpeg, jpg, png, gif, webp)'));
+    }
+  }
+});
+
+// 静态文件服务 - 提供头像访问
+app.use('/uploads/avatars', express.static(uploadsDir));
 
 // 数据库配置（优化连接）
 const dbConfig = {
@@ -123,6 +187,28 @@ function checkPermission(permission) {
   };
 }
 
+// 检查用户是否有指定权限的辅助函数
+async function hasPermission(userId, permission) {
+  try {
+    const connection = await getConn();
+    
+    const [permissions] = await connection.execute(`
+      SELECT DISTINCT p.perm_key 
+      FROM permissions p
+      JOIN role_permissions rp ON p.id = rp.permission_id
+      JOIN user_roles ur ON rp.role_id = ur.role_id
+      WHERE ur.user_id = ? AND p.perm_key = ?
+    `, [userId, permission]);
+    
+    await connection.end();
+    
+    return permissions.length > 0;
+  } catch (e) {
+    console.error('检查权限失败:', e);
+    return false;
+  }
+}
+
 // 获取数据库连接
 async function getConn() {
   return mysql.createConnection(dbConfig);
@@ -169,126 +255,6 @@ async function testConnection(retries = 3) {
   console.error('❌ 数据库连接最终失败，请检查网络和配置');
 }
 
-// 数据库迁移：确保log_status字段存在
-async function migrateDatabase() {
-  try {
-    console.log('🔄 检查数据库结构...');
-    const connection = await mysql.createConnection(dbConfig);
-    
-    // 检查logs表是否有log_status字段
-    const [columns] = await connection.execute(`
-      SELECT COLUMN_NAME 
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'logs' AND COLUMN_NAME = 'log_status'
-    `, [dbConfig.database]);
-    
-    if (columns.length === 0) {
-      console.log('📝 添加log_status字段到logs表...');
-      await connection.execute(`
-        ALTER TABLE logs 
-        ADD COLUMN log_status VARCHAR(20) DEFAULT 'pending' 
-        COMMENT '日志状态: pending(进行中), completed(已完成), cancelled(已取消)'
-      `);
-      
-      // 更新现有记录的默认状态
-      await connection.execute(`
-        UPDATE logs SET log_status = 'pending' WHERE log_status IS NULL OR log_status = ''
-      `);
-      console.log('✅ log_status字段添加成功');
-    } else {
-      console.log('✅ log_status字段已存在，正在修正其定义...');
-      try {
-        // 强制将列类型从 ENUM (或任何其他类型) 更改为 VARCHAR，并设置默认值
-        await connection.execute(
-          `ALTER TABLE logs CHANGE COLUMN log_status log_status VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending'`
-        );
-        console.log('✅ log_status 字段类型修正成功。');
-
-        // 将所有旧的状态值统一为 'pending'
-        console.log('🔄 统一旧的状态值...');
-        await connection.execute(
-          `UPDATE logs SET log_status = 'pending' WHERE log_status IN ('in_progress', 'not_start', 'paused')`
-        );
-        console.log('✅ 旧状态值统一完成。');
-      } catch (error) {
-        console.error('❌ 修正 log_status 字段时出错:', error.message);
-      }
-    }
-    
-    // 检查tasks表的status字段类型
-    const [taskStatusColumns] = await connection.execute(`
-      SELECT COLUMN_NAME, COLUMN_TYPE, COLUMN_DEFAULT
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'tasks' AND COLUMN_NAME = 'status'
-    `, [dbConfig.database]);
-    
-    if (taskStatusColumns.length > 0) {
-      const columnType = taskStatusColumns[0].COLUMN_TYPE;
-      console.log('📋 tasks.status字段类型:', columnType);
-      
-      // 如果是ENUM类型，需要修改ENUM定义以包含新状态
-      if (columnType.includes('enum')) {
-        console.log('📝 修改tasks.status的ENUM定义以支持新状态...');
-        try {
-          await connection.execute(`
-            ALTER TABLE tasks 
-            MODIFY COLUMN status ENUM(
-              'pending_assignment',
-              'not_started',
-              'in_progress',
-              'paused',
-              'completed',
-              'closed',
-              'cancelled'
-            ) DEFAULT 'not_started'
-            COMMENT '任务状态: pending_assignment(待分配), not_started(未开始), in_progress(进行中), paused(已暂停), completed(已完成), closed(已关闭), cancelled(已取消)'
-          `);
-          console.log('✅ tasks.status ENUM定义更新成功');
-        } catch (error) {
-          console.error('❌ 更新tasks.status ENUM定义失败:', error.message);
-          // 如果ENUM修改失败，尝试转换为VARCHAR
-          console.log('🔄 尝试将status字段转换为VARCHAR类型...');
-          try {
-            await connection.execute(`
-              ALTER TABLE tasks 
-              MODIFY COLUMN status VARCHAR(50) DEFAULT 'not_started'
-              COMMENT '任务状态: pending_assignment(待分配), not_started(未开始), in_progress(进行中), paused(已暂停), completed(已完成), closed(已关闭), cancelled(已取消)'
-            `);
-            console.log('✅ tasks.status字段已转换为VARCHAR类型');
-          } catch (varcharError) {
-            console.error('❌ 转换VARCHAR类型失败:', varcharError.message);
-          }
-        }
-      } else if (columnType.includes('varchar')) {
-        // 如果是VARCHAR类型，检查长度是否足够
-        const varcharLength = parseInt(columnType.match(/varchar\((\d+)\)/i)?.[1] || '20');
-        if (varcharLength < 50) {
-          console.log(`📝 扩展tasks.status字段长度从${varcharLength}到50...`);
-          try {
-            await connection.execute(`
-              ALTER TABLE tasks 
-              MODIFY COLUMN status VARCHAR(50) DEFAULT 'not_started'
-              COMMENT '任务状态: pending_assignment(待分配), not_started(未开始), in_progress(进行中), paused(已暂停), completed(已完成), closed(已关闭), cancelled(已取消)'
-            `);
-            console.log('✅ tasks.status字段长度扩展成功');
-          } catch (error) {
-            console.error('❌ 扩展status字段长度失败:', error.message);
-          }
-        } else {
-          console.log('✅ tasks.status字段类型和长度已满足要求');
-        }
-      } else {
-        console.log('⚠️  tasks.status字段类型不是ENUM或VARCHAR，可能需要手动修改');
-      }
-    } else {
-      console.log('⚠️  未找到tasks表的status字段');
-    }
-    
-    await connection.end();
-  } catch (error) {
-    console.error('❌ 数据库迁移失败:', error.message);
-  }
-}
 
 // 注册接口
 app.post('/api/register', async (req, res) => {
@@ -515,6 +481,107 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// 上传头像接口 - 将图片转换为 base64 字符串存储
+app.post('/api/user/avatar', auth, upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        message: '请选择要上传的图片' 
+      });
+    }
+
+    const connection = await getConn();
+    
+    // 读取文件并转换为 base64 字符串
+    const fileBuffer = fs.readFileSync(req.file.path);
+    const base64String = fileBuffer.toString('base64');
+    
+    // 根据文件扩展名确定正确的 MIME 类型（因为 multer 可能返回 application/octet-stream）
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    let mimeType = req.file.mimetype;
+    
+    // 如果 MIME 类型不正确，根据扩展名修正
+    if (mimeType === 'application/octet-stream' || !mimeType.startsWith('image/')) {
+      const mimeMap = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
+      };
+      mimeType = mimeMap[ext] || 'image/jpeg'; // 默认使用 jpeg
+    }
+    
+    // 构建 data URI（包含正确的 MIME 类型）
+    const avatarDataUri = `data:${mimeType};base64,${base64String}`;
+    
+    // 保存文件路径，用于后续删除
+    const tempFilePath = req.file.path;
+    
+    // 删除临时文件（不再需要）
+    try {
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
+    } catch (err) {
+      console.error('删除临时文件失败:', err);
+    }
+    
+    // 更新用户头像（存储 base64 字符串）
+    await connection.execute(
+      'UPDATE users SET avatar_url = ? WHERE id = ?',
+      [avatarDataUri, req.user.id]
+    );
+    
+    // 同时更新 avatars 表（file_name 等字段作为元数据保留，用于记录原始文件名等信息）
+    const [existingAvatar] = await connection.execute(
+      'SELECT id FROM avatars WHERE user_id = ?',
+      [req.user.id]
+    );
+    
+    if (existingAvatar.length > 0) {
+      // 更新现有记录（file_name 保留作为元数据，记录原始文件名）
+      await connection.execute(
+        'UPDATE avatars SET avatar_url = ?, file_name = ?, file_size = ?, mime_type = ?, updated_at = NOW() WHERE user_id = ?',
+        [avatarDataUri, req.file.originalname, req.file.size, req.file.mimetype, req.user.id]
+      );
+    } else {
+      // 插入新记录
+      await connection.execute(
+        'INSERT INTO avatars (user_id, avatar_url, file_name, file_size, mime_type) VALUES (?, ?, ?, ?, ?)',
+        [req.user.id, avatarDataUri, req.file.originalname, req.file.size, req.file.mimetype]
+      );
+    }
+    
+    await connection.end();
+    
+    // 调试信息：检查返回的数据
+    console.log('头像上传成功，返回数据长度:', avatarDataUri.length);
+    console.log('头像数据前100字符:', avatarDataUri.substring(0, 100));
+    
+    res.json({
+      success: true,
+      message: '头像上传成功',
+      avatarUrl: avatarDataUri
+    });
+  } catch (e) {
+    console.error('上传头像失败:', e);
+    // 如果上传失败，删除已上传的临时文件
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (err) {
+        console.error('删除上传文件失败:', err);
+      }
+    }
+    res.status(500).json({ 
+      success: false, 
+      message: '服务器内部错误: ' + e.message 
+    });
+  }
+});
+
 // ---- Users（用户搜索） ----
 
 // 获取用户列表
@@ -547,18 +614,8 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const connection = await getConn();
     
-    // 获取用户角色
-    const [roles] = await connection.execute(`
-      SELECT r.role_name 
-      FROM roles r
-      JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.user_id = ?
-    `, [req.user.id]);
-    
-    const userRoles = roles.map(r => r.role_name);
-    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
-    const isDeptHead = userRoles.includes('dept_head');
-    const isStaff = userRoles.includes('staff');
+    // 检查是否有查看所有任务的权限
+    const canViewAll = await hasPermission(req.user.id, 'task:view_all');
     
     // 获取任务基本信息
     const [taskRows] = await connection.execute(
@@ -577,27 +634,20 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
     const task = taskRows[0];
     
     // 检查查看权限
-    if (!isFounderOrAdmin) {
-      if (isDeptHead) {
-        // dept_head只能查看自己创建的任务
-        if (task.creator_user_id != req.user.id) {
-          await connection.end();
-          return res.status(403).json({ success: false, message: '只能查看自己创建的任务' });
-        }
-      } else if (isStaff) {
-        // staff只能查看分配给自己的任务，且必须是已分配状态
-        if (task.owner_user_id != req.user.id) {
-          await connection.end();
-          return res.status(403).json({ success: false, message: '只能查看分配给自己的任务' });
-        }
-        if (task.status == 'pending_assignment') {
-          await connection.end();
-          return res.status(403).json({ success: false, message: '任务尚未分配，无法查看' });
-        }
-      } else {
-        // 其他角色或无角色，不能查看
+    if (!canViewAll) {
+      // 没有查看所有任务权限的用户，只能查看自己创建的任务或分配给自己的任务
+      const isCreator = task.creator_user_id == req.user.id;
+      const isAssignee = task.owner_user_id == req.user.id;
+      
+      if (!isCreator && !isAssignee) {
         await connection.end();
-        return res.status(403).json({ success: false, message: '无权查看此任务' });
+        return res.status(403).json({ success: false, message: '只能查看自己创建或分配给自己的任务' });
+      }
+      
+      // 如果是分配给自己的任务，必须是已分配状态（不是pending_assignment）
+      if (isAssignee && task.status == 'pending_assignment') {
+        await connection.end();
+        return res.status(403).json({ success: false, message: '任务尚未分配，无法查看' });
       }
     }
 
@@ -817,39 +867,21 @@ app.get('/api/tasks', auth, async (req, res) => {
     const limit = Number.isFinite(raw) && raw > 0 && raw <= 50 ? raw : 20;
     const connection = await getConn();
     
-    // 获取用户角色
-    const [roles] = await connection.execute(`
-      SELECT r.role_name 
-      FROM roles r
-      JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.user_id = ?
-    `, [req.user.id]);
-    
-    const userRoles = roles.map(r => r.role_name);
-    // founder和admin权限完全一致，可以看到所有任务
-    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
-    const isDeptHead = userRoles.includes('dept_head');
-    const isStaff = userRoles.includes('staff');
+    // 检查是否有查看所有任务的权限
+    const canViewAll = await hasPermission(req.user.id, 'task:view_all');
     
     let sql = 'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id, created_at, updated_at FROM tasks';
     const params = [];
     let whereConditions = [];
     
-    if (isFounderOrAdmin) {
-      // founder/admin可以看到所有任务
+    if (canViewAll) {
+      // 有 task:view_all 权限的用户（founder/admin）可以看到所有任务
       // 不需要额外条件
-    } else if (isDeptHead) {
-      // dept_head只能看到自己创建的任务
-      whereConditions.push('creator_id = ?');
-      params.push(req.user.id);
-    } else if (isStaff) {
-      // staff只能看到分配给自己的任务，且必须是已分配状态（不是pending_assignment）
-      whereConditions.push('assignee_id = ?');
-      whereConditions.push('status != ?');
-      params.push(req.user.id, 'pending_assignment');
     } else {
-      // 其他角色或无角色，默认看不到任何任务
-      whereConditions.push('1 = 0'); // 永远为false，不返回任何结果
+      // 没有权限的用户只能看到自己创建的任务或分配给自己的任务
+      // 如果是创建者，可以查看；如果是被分配者，且状态不是pending_assignment，可以查看
+      whereConditions.push('(creator_id = ? OR (assignee_id = ? AND status != ?))');
+      params.push(req.user.id, req.user.id, 'pending_assignment');
     }
     
     // 添加关键词搜索
@@ -972,19 +1004,6 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
     const { name, description, priority, status, progress, dueTime, planStartTime, ownerUserId } = req.body;
     const connection = await getConn();
     
-    // 获取用户角色
-    const [roles] = await connection.execute(`
-      SELECT r.role_name 
-      FROM roles r
-      JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.user_id = ?
-    `, [req.user.id]);
-    
-    const userRoles = roles.map(r => r.role_name);
-    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
-    const isDeptHead = userRoles.includes('dept_head');
-    const isStaff = userRoles.includes('staff');
-    
     // 检查任务是否存在
     const [exists] = await connection.execute('SELECT id, creator_id, assignee_id FROM tasks WHERE id = ? LIMIT 1', [id]);
     if (exists.length === 0) {
@@ -993,31 +1012,27 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
     }
     
     const task = exists[0];
+    const isCreator = task.creator_id === req.user.id;
     
-    // 检查编辑权限
-    if (isFounderOrAdmin) {
-      // founder/admin可以编辑任何任务
-    } else if (isDeptHead) {
-      // dept_head只能编辑自己创建的任务
-      if (task.creator_id !== req.user.id) {
+    // 所有人都可以修改任务，但如果不是创建者，只能更新进度
+    if (!isCreator) {
+      // 非创建者只能更新进度
+      if (progress !== undefined && progress !== null) {
+        const newStatus = getTaskStatusFromProgress(progress);
+        await connection.execute(
+          'UPDATE tasks SET progress = ?, status = ? WHERE id = ?',
+          [progress, newStatus, id]
+        );
+        const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
         await connection.end();
-        return res.status(403).json({ success: false, message: '只能编辑自己创建的任务' });
-      }
-    } else if (isStaff) {
-      // staff只能编辑分配给自己的任务（仅限进度、状态等有限字段）
-      if (task.assignee_id !== req.user.id) {
+        return res.json({ success: true, task: rows[0] });
+      } else {
         await connection.end();
-        return res.status(403).json({ success: false, message: '只能编辑分配给自己的任务' });
+        return res.status(403).json({ success: false, message: '非创建者只能更新任务进度' });
       }
-      // 限制可编辑字段：staff不能修改分配、优先级等
-      if (ownerUserId !== undefined && ownerUserId !== task.assignee_id) {
-        await connection.end();
-        return res.status(403).json({ success: false, message: '普通员工不能修改任务分配' });
-      }
-    } else {
-      await connection.end();
-      return res.status(403).json({ success: false, message: '无权编辑此任务' });
     }
+    
+    // 创建者可以更新所有字段
     // 转换日期时间格式
     const planStartDt = toMySQLDateTime(planStartTime);
     const dueDt = toMySQLDateTime(dueTime);
@@ -1617,5 +1632,4 @@ app.listen(PORT, async () => {
   console.log(`🚀 服务器运行在 http://localhost:${PORT}`);
   console.log(`📊 健康检查: http://localhost:${PORT}/api/health`);
   await testConnection();
-  await migrateDatabase();
 });

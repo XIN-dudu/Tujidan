@@ -1,4 +1,7 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/user_service.dart';
 import '../auth_service.dart';
 import '../login_page.dart';
@@ -12,10 +15,12 @@ class UserProfilePage extends StatefulWidget {
 
 class _UserProfilePageState extends State<UserProfilePage> {
   final UserService _userService = UserService();
+  final ImagePicker _imagePicker = ImagePicker();
   Map<String, dynamic>? _userInfo;
   List<dynamic> _roles = [];
   List<dynamic> _permissions = [];
   bool _isLoading = true;
+  bool _isUploading = false;
 
   @override
   void initState() {
@@ -24,6 +29,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
   }
 
   Future<void> _loadUserData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     
     try {
@@ -36,15 +42,17 @@ class _UserProfilePageState extends State<UserProfilePage> {
       final userInfo = results[0] as Map<String, dynamic>?;
       final permissionsData = results[1] as Map<String, dynamic>?;
 
-      setState(() {
-        _userInfo = userInfo;
-        _roles = permissionsData?['roles'] ?? [];
-        _permissions = permissionsData?['permissions'] ?? [];
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() => _isLoading = false);
       if (mounted) {
+        setState(() {
+          _userInfo = userInfo;
+          _roles = permissionsData?['roles'] ?? [];
+          _permissions = permissionsData?['permissions'] ?? [];
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('加载用户信息失败: $e')),
         );
@@ -75,6 +83,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
     if (confirm == true && mounted) {
       final authService = AuthService();
       await authService.logout();
+      // 清除头像缓存
+      UserService.clearAvatarCache();
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const LoginPage()),
@@ -113,10 +123,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildUserInfoCard(),
-                    const SizedBox(height: 16),
-                    _buildRolesCard(),
-                    const SizedBox(height: 16),
-                    _buildPermissionsCard(),
                     const SizedBox(height: 24),
                     _buildLogoutButton(),
                   ],
@@ -143,6 +149,44 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
   }
 
+  Future<void> _pickAndUploadAvatar() async {
+    try {
+      final XFile? image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+
+      if (image == null) return;
+
+      if (!mounted) return;
+      setState(() => _isUploading = true);
+
+      final success = await _userService.uploadAvatar(File(image.path));
+      
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('头像更新成功')),
+        );
+        await _loadUserData();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('头像更新失败')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('选择图片失败: $e')),
+      );
+    }
+  }
+
   Widget _buildUserInfoCard() {
     if (_userInfo == null) {
       return const Card(
@@ -153,79 +197,92 @@ class _UserProfilePageState extends State<UserProfilePage> {
       );
     }
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '基本信息',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            _buildInfoRow('用户名', _userInfo!['username'] ?? ''),
-            _buildInfoRow('真实姓名', _userInfo!['real_name'] ?? ''),
-            _buildInfoRow('邮箱', _userInfo!['email'] ?? '未设置'),
-            _buildInfoRow('手机号', _userInfo!['phone'] ?? '未设置'),
-            _buildInfoRow('职位', _userInfo!['position'] ?? '未设置'),
-            _buildInfoRow('用户ID', _userInfo!['id']?.toString() ?? ''),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRolesCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '我的角色',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            if (_roles.isEmpty)
-              const Text('暂无角色', style: TextStyle(color: Colors.grey))
-            else
-              ..._roles.map((role) => _buildRoleItem(role)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPermissionsCard() {
-    // 按模块分组权限
-    final Map<String, List<dynamic>> groupedPermissions = {};
-    for (final permission in _permissions) {
-      final module = permission['module'] ?? 'other';
-      if (!groupedPermissions.containsKey(module)) {
-        groupedPermissions[module] = [];
+    final avatarUrl = _userInfo!['avatar_url'] as String?;
+    
+    // 优先使用缓存的头像图片
+    ImageProvider? avatarImage = UserService.getCachedAvatarImage(avatarUrl);
+    
+    // 如果没有缓存，则解码（这种情况应该很少发生，因为 getCurrentUser 已经缓存了）
+    if (avatarImage == null && avatarUrl != null && avatarUrl.isNotEmpty) {
+      try {
+        // 检查是否是 data URI（支持 data:image 和 data:application/octet-stream）
+        if (avatarUrl.startsWith('data:')) {
+          // data URI 格式：data:[<mediatype>][;base64],<data>
+          final parts = avatarUrl.split(',');
+          if (parts.length >= 2) {
+            final base64String = parts[1];
+            final imageBytes = base64Decode(base64String);
+            avatarImage = MemoryImage(imageBytes);
+            // 缓存解码后的图片（备用情况，正常情况下 getCurrentUser 已经缓存了）
+            UserService.updateAvatarCache(avatarUrl, avatarImage);
+          }
+        } else if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://')) {
+          // 网络图片
+          avatarImage = NetworkImage(avatarUrl);
+        } else if (avatarUrl.startsWith('/')) {
+          // 相对路径，转换为完整 URL
+          avatarImage = NetworkImage('http://localhost:3001$avatarUrl');
+        }
+      } catch (e) {
+        print('解析头像失败: $e');
+        avatarImage = null;
       }
-      groupedPermissions[module]!.add(permission);
     }
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(24),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '我的权限',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            // 头像显示
+            Stack(
+              children: [
+                CircleAvatar(
+                  radius: 60,
+                  backgroundColor: Colors.grey[300],
+                  backgroundImage: avatarImage,
+                  // 只有当 backgroundImage 不为 null 时才设置 onBackgroundImageError
+                  onBackgroundImageError: avatarImage != null
+                      ? (exception, stackTrace) {
+                          print('头像加载失败: $exception');
+                        }
+                      : null,
+                  child: avatarImage == null
+                      ? const Icon(Icons.person, size: 60, color: Colors.grey)
+                      : null,
+                ),
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.blue,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: IconButton(
+                      icon: _isUploading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                      onPressed: _isUploading ? null : _pickAndUploadAvatar,
+                      tooltip: '更新头像',
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            if (_permissions.isEmpty)
-              const Text('暂无权限', style: TextStyle(color: Colors.grey))
-            else
-              ...groupedPermissions.entries.map((entry) => 
-                _buildPermissionGroup(entry.key, entry.value)
-              ),
+            const SizedBox(height: 24),
+            // 用户名和ID
+            _buildInfoRow('用户名', _userInfo!['username'] ?? ''),
+            const SizedBox(height: 8),
+            _buildInfoRow('用户ID', _userInfo!['id']?.toString() ?? ''),
           ],
         ),
       ),
@@ -258,117 +315,4 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
   }
 
-  Widget _buildRoleItem(Map<String, dynamic> role) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue[50],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue[200]!),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.person, color: Colors.blue[600]),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  role['role_name'] ?? '',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-                if (role['description'] != null)
-                  Text(
-                    role['description'],
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPermissionGroup(String module, List<dynamic> permissions) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _getModuleDisplayName(module),
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ...permissions.map((permission) => _buildPermissionItem(permission)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPermissionItem(Map<String, dynamic> permission) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.green[50],
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.green[200]!),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.check_circle, color: Colors.green[600], size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  permission['name'] ?? '',
-                  style: const TextStyle(fontSize: 14),
-                ),
-                Text(
-                  permission['perm_key'] ?? '',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _getModuleDisplayName(String module) {
-    switch (module) {
-      case 'user_management':
-        return '用户管理';
-      case 'task_management':
-        return '任务管理';
-      case 'log_management':
-        return '日志管理';
-      case 'role_management':
-        return '角色管理';
-      case 'system_management':
-        return '系统管理';
-      default:
-        return module;
-    }
-  }
 }

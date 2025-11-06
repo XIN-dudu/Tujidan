@@ -92,11 +92,13 @@ class _LogViewPageState extends State<LogViewPage> {
       );
       final taskResp = await TaskService.getTasks();
 
-      setState(() {
-        _logs = logResp.success && logResp.data != null ? logResp.data! : [];
-        _tasks = taskResp.success && taskResp.data != null ? taskResp.data! : [];
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _logs = logResp.success && logResp.data != null ? logResp.data! : [];
+          _tasks = taskResp.success && taskResp.data != null ? taskResp.data! : [];
+          _isLoading = false;
+        });
+      }
       if (!logResp.success && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('加载日志失败: ${logResp.message}')),
@@ -108,8 +110,8 @@ class _LogViewPageState extends State<LogViewPage> {
         );
       }
     } catch (e) {
-      setState(() => _isLoading = false);
       if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('加载日志失败: $e')),
         );
