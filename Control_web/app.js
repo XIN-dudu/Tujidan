@@ -3,6 +3,47 @@ const API_BASE = 'http://localhost:3002/api';
 let currentUser = null;
 let authToken = null;
 
+// 数据缓存（减少重复请求）
+const dataCache = {
+  users: { data: null, timestamp: 0, ttl: 30000 }, // 30秒缓存
+  roles: { data: null, timestamp: 0, ttl: 60000 }, // 60秒缓存
+  permissions: { data: null, timestamp: 0, ttl: 60000 }, // 60秒缓存
+  tasks: { data: null, timestamp: 0, ttl: 10000 }, // 10秒缓存
+  logs: { data: null, timestamp: 0, ttl: 10000 }, // 10秒缓存
+};
+
+// 防抖函数
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+// 检查缓存是否有效
+function isCacheValid(cacheKey) {
+  const cache = dataCache[cacheKey];
+  if (!cache || !cache.data) return false;
+  return Date.now() - cache.timestamp < cache.ttl;
+}
+
+// 清除缓存
+function clearCache(cacheKey) {
+  if (cacheKey) {
+    dataCache[cacheKey] = { data: null, timestamp: 0, ttl: dataCache[cacheKey]?.ttl || 0 };
+  } else {
+    // 清除所有缓存
+    Object.keys(dataCache).forEach(key => {
+      dataCache[key] = { data: null, timestamp: 0, ttl: dataCache[key].ttl };
+    });
+  }
+}
+
 // 页面初始化
 document.addEventListener('DOMContentLoaded', function() {
     // 检查登录状态
@@ -256,9 +297,16 @@ async function loadRoleStats() {
     }
 }
 
-// 用户管理
-async function loadUsers() {
+// 用户管理（带缓存优化）
+async function loadUsers(forceRefresh = false) {
     try {
+        // 检查缓存
+        if (!forceRefresh && isCacheValid('users')) {
+            console.log('使用缓存的用户列表');
+            displayUsers(dataCache.users.data);
+            return;
+        }
+        
         console.log('开始加载用户列表...');
         
         // 首先尝试管理员接口
@@ -285,6 +333,8 @@ async function loadUsers() {
         console.log('管理员接口响应数据:', data);
         
         if (data.success) {
+            // 更新缓存
+            dataCache.users = { data: data.users, timestamp: Date.now(), ttl: dataCache.users.ttl };
             displayUsers(data.users);
             return;
         }
@@ -303,6 +353,7 @@ async function loadUsers() {
         console.log('调试接口响应数据:', debugData);
         
         if (debugData.success) {
+            dataCache.users = { data: debugData.users, timestamp: Date.now(), ttl: dataCache.users.ttl };
             displayUsers(debugData.users);
             console.log('调试信息:', debugData.debug);
             return;
@@ -322,6 +373,7 @@ async function loadUsers() {
         console.log('普通用户接口响应数据:', fallbackData);
         
         if (fallbackData.success) {
+            dataCache.users = { data: fallbackData.users, timestamp: Date.now(), ttl: dataCache.users.ttl };
             displayUsers(fallbackData.users);
         } else {
             const errorMsg = data.message || debugData.message || fallbackData.message || '未知错误';
@@ -378,7 +430,6 @@ function displayUsers(users) {
             <td>${user.username}</td>
             <td>${user.real_name || '-'}</td>
             <td>${user.email || '-'}</td>
-            <td>${user.position || '-'}</td>
             <td>${roleDisplay}</td>
             <td><span class="badge bg-${user.status === 1 ? 'success' : 'danger'}">${user.status === 1 ? '正常' : '禁用'}</span></td>
             <td>
@@ -394,9 +445,16 @@ function displayUsers(users) {
     });
 }
 
-// 角色管理
-async function loadRoles() {
+// 角色管理（带缓存优化）
+async function loadRoles(forceRefresh = false) {
     try {
+        // 检查缓存
+        if (!forceRefresh && isCacheValid('roles')) {
+            console.log('使用缓存的角色列表');
+            displayRoles(dataCache.roles.data);
+            return;
+        }
+        
         const response = await fetch(`${API_BASE}/roles`, {
             headers: {
                 'Authorization': `Bearer ${authToken}`,
@@ -407,6 +465,8 @@ async function loadRoles() {
         const data = await response.json();
         
         if (data.success) {
+            // 更新缓存
+            dataCache.roles = { data: data.roles, timestamp: Date.now(), ttl: dataCache.roles.ttl };
             displayRoles(data.roles);
         } else {
             showError('加载角色列表失败: ' + data.message);
@@ -441,9 +501,16 @@ function displayRoles(roles) {
     });
 }
 
-// 权限管理
-async function loadPermissions() {
+// 权限管理（带缓存优化）
+async function loadPermissions(forceRefresh = false) {
     try {
+        // 检查缓存
+        if (!forceRefresh && isCacheValid('permissions')) {
+            console.log('使用缓存的权限列表');
+            displayPermissions(dataCache.permissions.data);
+            return;
+        }
+        
         const response = await fetch(`${API_BASE}/permissions`, {
             headers: {
                 'Authorization': `Bearer ${authToken}`,
@@ -454,6 +521,8 @@ async function loadPermissions() {
         const data = await response.json();
         
         if (data.success) {
+            // 更新缓存
+            dataCache.permissions = { data: data.permissions, timestamp: Date.now(), ttl: dataCache.permissions.ttl };
             displayPermissions(data.permissions);
         } else {
             showError('加载权限列表失败: ' + data.message);
@@ -485,9 +554,16 @@ function displayPermissions(permissions) {
     });
 }
 
-// 任务管理
-async function loadTasks() {
+// 任务管理（带缓存优化）
+async function loadTasks(forceRefresh = false) {
     try {
+        // 检查缓存
+        if (!forceRefresh && isCacheValid('tasks')) {
+            console.log('使用缓存的任务列表');
+            displayTasks(dataCache.tasks.data);
+            return;
+        }
+        
         const response = await fetch(`${API_BASE}/tasks`, {
             headers: {
                 'Authorization': `Bearer ${authToken}`,
@@ -498,6 +574,8 @@ async function loadTasks() {
         const data = await response.json();
         
         if (data.success) {
+            // 更新缓存
+            dataCache.tasks = { data: data.tasks, timestamp: Date.now(), ttl: dataCache.tasks.ttl };
             displayTasks(data.tasks);
         } else {
             showError('加载任务列表失败: ' + data.message);
@@ -512,25 +590,53 @@ function displayTasks(tasks) {
     const tbody = document.getElementById('tasks-table');
     tbody.innerHTML = '';
     
+    if (tasks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">暂无任务</td></tr>';
+        return;
+    }
+    
     tasks.forEach(task => {
         const row = document.createElement('tr');
         // 优先使用后端返回的 assignee 对象（更明确）：assignee.realName -> assignee.username -> 回退到 id 字段
         const assigneeObj = task.assignee || {};
         const assigneeText = assigneeObj.realName || assigneeObj.username || (task.assignee_id ? ('用户' + task.assignee_id) : (task.owner_user_id ? ('用户' + task.owner_user_id) : '-'));
+        
+        // 状态显示
+        const statusBadge = getStatusBadge(task.status);
+        
         row.innerHTML = `
-            <td>${task.name}</td>
+            <td>${task.name || '-'}</td>
             <td><span class="badge bg-${getPriorityColor(task.priority)}">${getPriorityText(task.priority)}</span></td>
             <td>
                 <div class="progress" style="height: 20px;">
-                    <div class="progress-bar" style="width: ${task.progress}%">${task.progress}%</div>
+                    <div class="progress-bar" style="width: ${task.progress || 0}%">${task.progress || 0}%</div>
                 </div>
             </td>
             <td>${assigneeText}</td>
             <td>${task.due_time ? formatDate(task.due_time) : '-'}</td>
-            <td><span class="badge bg-success">进行中</span></td>
+            <td>${statusBadge}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary me-1" onclick="editTask(${task.id})" title="编辑任务">
+                    <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${task.id})" title="删除任务">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
         `;
         tbody.appendChild(row);
     });
+}
+
+function getStatusBadge(status) {
+    const statusMap = {
+        'pending': { text: '待处理', color: 'warning' },
+        'in_progress': { text: '进行中', color: 'primary' },
+        'completed': { text: '已完成', color: 'success' },
+        'cancelled': { text: '已取消', color: 'secondary' }
+    };
+    const statusInfo = statusMap[status] || { text: status, color: 'secondary' };
+    return `<span class="badge bg-${statusInfo.color}">${statusInfo.text}</span>`;
 }
 
 // 日志管理
@@ -694,7 +800,8 @@ async function saveUser() {
             showSuccess(successMessage);
             bootstrap.Modal.getInstance(document.getElementById('userModal')).hide();
             currentEditingUserId = null;
-            loadUsers();
+            clearCache('users'); // 清除缓存，强制刷新
+            loadUsers(true);
         } else {
             showError((currentEditingUserId ? '更新' : '创建') + '用户失败: ' + data.message);
         }
@@ -895,7 +1002,8 @@ async function saveRole() {
             showSuccess(successMessage);
             bootstrap.Modal.getInstance(document.getElementById('roleModal')).hide();
             currentEditingRoleId = null;
-            loadRoles();
+            clearCache('roles'); // 清除缓存，强制刷新
+            loadRoles(true);
         } else {
             showError((currentEditingRoleId ? '更新' : '创建') + '角色失败: ' + data.message);
         }
@@ -1039,7 +1147,8 @@ async function saveUserRoles(userId) {
         if (data.success) {
             showSuccess('角色分配成功');
             bootstrap.Modal.getInstance(document.getElementById('roleAssignModal')).hide();
-            loadUsers(); // 重新加载用户列表
+            clearCache('users'); // 清除缓存，强制刷新
+            loadUsers(true); // 重新加载用户列表
         } else {
             showError('角色分配失败: ' + data.message);
         }
@@ -1089,7 +1198,8 @@ async function savePermission() {
         if (data.success) {
             showSuccess('权限创建成功');
             bootstrap.Modal.getInstance(document.getElementById('permissionModal')).hide();
-            loadPermissions();
+            clearCache('permissions'); // 清除缓存，强制刷新
+            loadPermissions(true);
         } else {
             showError('创建权限失败: ' + data.message);
         }
@@ -1185,5 +1295,210 @@ async function deleteRole(roleId) {
             console.error('删除角色失败:', error);
             showError('删除角色失败: ' + error.message);
         }
+    }
+}
+
+// 任务管理相关函数
+let currentEditingTaskId = null;
+
+// 显示任务模态框
+async function showTaskModal(taskId = null) {
+    const modal = new bootstrap.Modal(document.getElementById('taskModal'));
+    const title = document.getElementById('taskModalTitle');
+    const form = document.getElementById('taskForm');
+    const progressContainer = document.getElementById('taskProgressContainer');
+    
+    if (taskId) {
+        title.textContent = '编辑任务';
+        currentEditingTaskId = taskId;
+        progressContainer.style.display = 'block';
+        await loadTaskData(taskId);
+    } else {
+        title.textContent = '新建任务';
+        currentEditingTaskId = null;
+        form.reset();
+        progressContainer.style.display = 'none';
+        document.getElementById('taskProgress').value = 0;
+        document.getElementById('progressValue').textContent = '0%';
+    }
+    
+    // 加载用户列表
+    await loadUserOptions();
+    
+    modal.show();
+}
+
+// 加载任务数据用于编辑
+async function loadTaskData(taskId) {
+    try {
+        const response = await fetch(`${API_BASE}/tasks`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.tasks) {
+            const task = data.tasks.find(t => t.id === taskId);
+            if (task) {
+                document.getElementById('taskName').value = task.name || '';
+                document.getElementById('taskDescription').value = task.description || '';
+                document.getElementById('taskPriority').value = task.priority || 'low';
+                document.getElementById('taskStatus').value = task.status || 'pending';
+                document.getElementById('taskAssignee').value = task.assignee_id || '';
+                document.getElementById('taskProgress').value = task.progress || 0;
+                document.getElementById('progressValue').textContent = (task.progress || 0) + '%';
+                
+                // 格式化截止时间
+                if (task.due_time) {
+                    const dueDate = new Date(task.due_time);
+                    const year = dueDate.getFullYear();
+                    const month = String(dueDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(dueDate.getDate()).padStart(2, '0');
+                    const hours = String(dueDate.getHours()).padStart(2, '0');
+                    const minutes = String(dueDate.getMinutes()).padStart(2, '0');
+                    document.getElementById('taskDueTime').value = `${year}-${month}-${day}T${hours}:${minutes}`;
+                } else {
+                    document.getElementById('taskDueTime').value = '';
+                }
+            }
+        }
+    } catch (error) {
+        console.error('加载任务数据失败:', error);
+        showError('加载任务数据失败');
+    }
+}
+
+// 加载用户选项
+async function loadUserOptions() {
+    try {
+        const response = await fetch(`${API_BASE}/admin/users`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        const select = document.getElementById('taskAssignee');
+        
+        if (data.success && data.users) {
+            // 保留"未分配"选项
+            select.innerHTML = '<option value="">未分配</option>';
+            
+            data.users.forEach(user => {
+                const option = document.createElement('option');
+                option.value = user.id;
+                option.textContent = `${user.real_name || user.username} (${user.username})`;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('加载用户列表失败:', error);
+    }
+}
+
+// 保存任务
+async function saveTask() {
+    const formData = {
+        name: document.getElementById('taskName').value.trim(),
+        description: document.getElementById('taskDescription').value.trim(),
+        priority: document.getElementById('taskPriority').value,
+        status: document.getElementById('taskStatus').value,
+        assigneeId: document.getElementById('taskAssignee').value || null
+    };
+    
+    // 处理截止时间
+    const dueTimeInput = document.getElementById('taskDueTime').value;
+    if (dueTimeInput) {
+        formData.dueTime = new Date(dueTimeInput).toISOString();
+    }
+    
+    if (!formData.name) {
+        showError('任务名称不能为空');
+        return;
+    }
+    
+    try {
+        let response;
+        let successMessage;
+        
+        if (currentEditingTaskId) {
+            // 编辑任务
+            formData.progress = parseInt(document.getElementById('taskProgress').value);
+            
+            response = await fetch(`${API_BASE}/tasks/${currentEditingTaskId}`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+            successMessage = '任务更新成功';
+        } else {
+            // 创建任务
+            response = await fetch(`${API_BASE}/tasks`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+            successMessage = '任务创建成功';
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess(successMessage);
+            bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
+            currentEditingTaskId = null;
+            clearCache('tasks'); // 清除缓存，强制刷新
+            loadTasks(true);
+        } else {
+            showError((currentEditingTaskId ? '更新' : '创建') + '任务失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('保存任务失败:', error);
+        showError('保存任务失败: ' + error.message);
+    }
+}
+
+// 编辑任务
+function editTask(taskId) {
+    showTaskModal(taskId);
+}
+
+// 删除任务
+async function deleteTask(taskId) {
+    if (!confirm('⚠️ 警告：确定要删除这个任务吗？\n\n此操作不可撤销！')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/tasks/${taskId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('任务删除成功');
+            clearCache('tasks'); // 清除缓存，强制刷新
+            loadTasks(true);
+        } else {
+            showError('删除任务失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('删除任务失败:', error);
+        showError('删除任务失败: ' + error.message);
     }
 }

@@ -469,7 +469,6 @@
                                                 <th>用户名</th>
                                                 <th>真实姓名</th>
                                                 <th>邮箱</th>
-                                                <th>职位</th>
                                                 <th>角色</th>
                                                 <th>状态</th>
                                                 <th>操作</th>
@@ -477,7 +476,7 @@
                                         </thead>
                                         <tbody id="users-table">
                                             <tr>
-                                                <td colspan="7" class="text-center">加载中...</td>
+                                                <td colspan="6" class="text-center">加载中...</td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -554,6 +553,9 @@
                     <div id="tasks" class="page-section">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h4>任务管理</h4>
+                            <button class="btn btn-primary" onclick="showTaskModal()">
+                                <i class="bi bi-plus-circle me-1"></i>新建任务
+                            </button>
                         </div>
                         <div class="card">
                             <div class="card-body">
@@ -567,11 +569,12 @@
                                                 <th>负责人</th>
                                                 <th>截止时间</th>
                                                 <th>状态</th>
+                                                <th>操作</th>
                                             </tr>
                                         </thead>
                                         <tbody id="tasks-table">
                                             <tr>
-                                                <td colspan="6" class="text-center">加载中...</td>
+                                                <td colspan="7" class="text-center">加载中...</td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -736,6 +739,73 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="button" class="btn btn-primary" onclick="savePermission()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务编辑模态框 -->
+    <div class="modal fade" id="taskModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="taskModalTitle">新建任务</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="taskForm">
+                        <div class="mb-3">
+                            <label class="form-label">任务名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="taskName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">任务描述</label>
+                            <textarea class="form-control" id="taskDescription" rows="3"></textarea>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">优先级</label>
+                                <select class="form-select" id="taskPriority">
+                                    <option value="low">低</option>
+                                    <option value="medium">中</option>
+                                    <option value="high">高</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">状态</label>
+                                <select class="form-select" id="taskStatus">
+                                    <option value="pending">待处理</option>
+                                    <option value="in_progress">进行中</option>
+                                    <option value="completed">已完成</option>
+                                    <option value="cancelled">已取消</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">负责人</label>
+                            <select class="form-select" id="taskAssignee">
+                                <option value="">未分配</option>
+                                <!-- 动态加载用户选项 -->
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">截止时间</label>
+                            <input type="datetime-local" class="form-control" id="taskDueTime">
+                        </div>
+                        <div class="mb-3" id="taskProgressContainer" style="display: none;">
+                            <label class="form-label">进度 (%)</label>
+                            <input type="range" class="form-range" id="taskProgress" min="0" max="100" value="0" oninput="document.getElementById('progressValue').textContent = this.value + '%'">
+                            <div class="d-flex justify-content-between">
+                                <small>0%</small>
+                                <strong id="progressValue">0%</strong>
+                                <small>100%</small>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveTask()">保存</button>
                 </div>
             </div>
         </div>
