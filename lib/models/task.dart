@@ -3,6 +3,7 @@ class Task {
   final String name;
   final String description;
   final String assignee;
+  final String creator; // 创建者ID
   final DateTime deadline;
   final DateTime? plannedStart; // 计划开始时间
   final TaskPriority priority;
@@ -16,6 +17,7 @@ class Task {
     required this.name,
     required this.description,
     required this.assignee,
+    required this.creator,
     required this.deadline,
     this.plannedStart,
     required this.priority,
@@ -30,6 +32,7 @@ class Task {
       name: json['name'] ?? '',
       description: json['description'] ?? '',
       assignee: json['assignee']?.toString() ?? json['owner_user_id']?.toString() ?? '',
+      creator: json['creator']?.toString() ?? json['creator_user_id']?.toString() ?? '',
       deadline: DateTime.parse((json['deadline'] ?? json['due_time'] ?? DateTime.now().toIso8601String()).toString()),
       plannedStart: json['plan_start_time'] != null ? DateTime.parse(json['plan_start_time'].toString()) : null,
       priority: TaskPriority.values.firstWhere(
@@ -46,6 +49,9 @@ class Task {
   static TaskStatus _mapStatus(dynamic v) {
     final s = (v ?? '').toString().toLowerCase().replaceAll('_', '');
     switch (s) {
+      case 'pendingassignment':
+      case 'tobeassigned':
+        return TaskStatus.pending_assignment;
       case 'notstarted':
         return TaskStatus.not_started;
       case 'inprogress':
@@ -76,6 +82,7 @@ class Task {
       'progress': progress,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
+      'creator': creator,
     };
   }
 
@@ -84,6 +91,7 @@ class Task {
     String? name,
     String? description,
     String? assignee,
+    String? creator,
     DateTime? deadline,
     DateTime? plannedStart,
     TaskPriority? priority,
@@ -97,6 +105,7 @@ class Task {
       name: name ?? this.name,
       description: description ?? this.description,
       assignee: assignee ?? this.assignee,
+      creator: creator ?? this.creator,
       deadline: deadline ?? this.deadline,
       plannedStart: plannedStart ?? this.plannedStart,
       priority: priority ?? this.priority,
@@ -118,6 +127,7 @@ enum TaskPriority {
 }
 
 enum TaskStatus {
+  pending_assignment('待分配'),
   not_started('未开始'),
   in_progress('进行中'),
   paused('已暂停'),

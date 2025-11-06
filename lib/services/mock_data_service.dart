@@ -10,6 +10,7 @@ class MockDataService {
       name: '完成项目文档',
       description: '编写项目需求文档和技术规格说明',
       assignee: '张三',
+      creator: '1', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 7)),
       priority: TaskPriority.high,
       status: TaskStatus.inProgress,
@@ -22,6 +23,7 @@ class MockDataService {
       name: '代码审查',
       description: '对团队成员提交的代码进行审查',
       assignee: '李四',
+      creator: '1', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 3)),
       priority: TaskPriority.medium,
       status: TaskStatus.pending,
@@ -34,6 +36,7 @@ class MockDataService {
       name: '用户界面设计',
       description: '设计新的用户界面原型',
       assignee: '王五',
+      creator: '2', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 10)),
       priority: TaskPriority.low,
       status: TaskStatus.completed,
@@ -46,6 +49,7 @@ class MockDataService {
       name: '数据库优化',
       description: '优化数据库查询性能',
       assignee: '赵六',
+      creator: '1', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 5)),
       priority: TaskPriority.high,
       status: TaskStatus.inProgress,

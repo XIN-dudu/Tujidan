@@ -44,6 +44,11 @@ function toMySQLDateTime(value) {
 function normalizeTaskStatus(input) {
   const s = (input || '').toString().toLowerCase();
   switch (s) {
+    case 'pending_assignment':
+    case 'pendingassignment':
+    case 'to_be_assigned':
+    case 'tobeassigned':
+      return 'pending_assignment';
     case 'pending':
     case 'not_started':
       return 'not_started';
@@ -208,6 +213,75 @@ async function migrateDatabase() {
       } catch (error) {
         console.error('❌ 修正 log_status 字段时出错:', error.message);
       }
+    }
+    
+    // 检查tasks表的status字段类型
+    const [taskStatusColumns] = await connection.execute(`
+      SELECT COLUMN_NAME, COLUMN_TYPE, COLUMN_DEFAULT
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'tasks' AND COLUMN_NAME = 'status'
+    `, [dbConfig.database]);
+    
+    if (taskStatusColumns.length > 0) {
+      const columnType = taskStatusColumns[0].COLUMN_TYPE;
+      console.log('📋 tasks.status字段类型:', columnType);
+      
+      // 如果是ENUM类型，需要修改ENUM定义以包含新状态
+      if (columnType.includes('enum')) {
+        console.log('📝 修改tasks.status的ENUM定义以支持新状态...');
+        try {
+          await connection.execute(`
+            ALTER TABLE tasks 
+            MODIFY COLUMN status ENUM(
+              'pending_assignment',
+              'not_started',
+              'in_progress',
+              'paused',
+              'completed',
+              'closed',
+              'cancelled'
+            ) DEFAULT 'not_started'
+            COMMENT '任务状态: pending_assignment(待分配), not_started(未开始), in_progress(进行中), paused(已暂停), completed(已完成), closed(已关闭), cancelled(已取消)'
+          `);
+          console.log('✅ tasks.status ENUM定义更新成功');
+        } catch (error) {
+          console.error('❌ 更新tasks.status ENUM定义失败:', error.message);
+          // 如果ENUM修改失败，尝试转换为VARCHAR
+          console.log('🔄 尝试将status字段转换为VARCHAR类型...');
+          try {
+            await connection.execute(`
+              ALTER TABLE tasks 
+              MODIFY COLUMN status VARCHAR(50) DEFAULT 'not_started'
+              COMMENT '任务状态: pending_assignment(待分配), not_started(未开始), in_progress(进行中), paused(已暂停), completed(已完成), closed(已关闭), cancelled(已取消)'
+            `);
+            console.log('✅ tasks.status字段已转换为VARCHAR类型');
+          } catch (varcharError) {
+            console.error('❌ 转换VARCHAR类型失败:', varcharError.message);
+          }
+        }
+      } else if (columnType.includes('varchar')) {
+        // 如果是VARCHAR类型，检查长度是否足够
+        const varcharLength = parseInt(columnType.match(/varchar\((\d+)\)/i)?.[1] || '20');
+        if (varcharLength < 50) {
+          console.log(`📝 扩展tasks.status字段长度从${varcharLength}到50...`);
+          try {
+            await connection.execute(`
+              ALTER TABLE tasks 
+              MODIFY COLUMN status VARCHAR(50) DEFAULT 'not_started'
+              COMMENT '任务状态: pending_assignment(待分配), not_started(未开始), in_progress(进行中), paused(已暂停), completed(已完成), closed(已关闭), cancelled(已取消)'
+            `);
+            console.log('✅ tasks.status字段长度扩展成功');
+          } catch (error) {
+            console.error('❌ 扩展status字段长度失败:', error.message);
+          }
+        } else {
+          console.log('✅ tasks.status字段类型和长度已满足要求');
+        }
+      } else {
+        console.log('⚠️  tasks.status字段类型不是ENUM或VARCHAR，可能需要手动修改');
+      }
+    } else {
+      console.log('⚠️  未找到tasks表的status字段');
     }
     
     await connection.end();
@@ -473,6 +547,19 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const connection = await getConn();
     
+    // 获取用户角色
+    const [roles] = await connection.execute(`
+      SELECT r.role_name 
+      FROM roles r
+      JOIN user_roles ur ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+    `, [req.user.id]);
+    
+    const userRoles = roles.map(r => r.role_name);
+    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
+    const isDeptHead = userRoles.includes('dept_head');
+    const isStaff = userRoles.includes('staff');
+    
     // 获取任务基本信息
     const [taskRows] = await connection.execute(
       'SELECT id, task_name AS name, description, priority, status, progress, ' +
@@ -486,6 +573,33 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
     }
+    
+    const task = taskRows[0];
+    
+    // 检查查看权限
+    if (!isFounderOrAdmin) {
+      if (isDeptHead) {
+        // dept_head只能查看自己创建的任务
+        if (task.creator_user_id != req.user.id) {
+          await connection.end();
+          return res.status(403).json({ success: false, message: '只能查看自己创建的任务' });
+        }
+      } else if (isStaff) {
+        // staff只能查看分配给自己的任务，且必须是已分配状态
+        if (task.owner_user_id != req.user.id) {
+          await connection.end();
+          return res.status(403).json({ success: false, message: '只能查看分配给自己的任务' });
+        }
+        if (task.status == 'pending_assignment') {
+          await connection.end();
+          return res.status(403).json({ success: false, message: '任务尚未分配，无法查看' });
+        }
+      } else {
+        // 其他角色或无角色，不能查看
+        await connection.end();
+        return res.status(403).json({ success: false, message: '无权查看此任务' });
+      }
+    }
 
     // 获取任务的相关日志
     const [logRows] = await connection.execute(
@@ -493,7 +607,6 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
       [id]
     );
 
-    const task = taskRows[0];
     task.logs = logRows;
 
     await connection.end();
@@ -704,7 +817,7 @@ app.get('/api/tasks', auth, async (req, res) => {
     const limit = Number.isFinite(raw) && raw > 0 && raw <= 50 ? raw : 20;
     const connection = await getConn();
     
-    // 检查用户是否是管理员或领导
+    // 获取用户角色
     const [roles] = await connection.execute(`
       SELECT r.role_name 
       FROM roles r
@@ -713,32 +826,41 @@ app.get('/api/tasks', auth, async (req, res) => {
     `, [req.user.id]);
     
     const userRoles = roles.map(r => r.role_name);
-    // founder和admin对任务的权限完全相同
-    const isAdminOrLeader = userRoles.includes('admin') || 
-                          userRoles.includes('founder') ||
-                          userRoles.includes('leader') || 
-                          userRoles.includes('管理员') || 
-                          userRoles.includes('领导');
+    // founder和admin权限完全一致，可以看到所有任务
+    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
+    const isDeptHead = userRoles.includes('dept_head');
+    const isStaff = userRoles.includes('staff');
     
     let sql = 'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id, created_at, updated_at FROM tasks';
     const params = [];
+    let whereConditions = [];
     
-    if (isAdminOrLeader) {
-      // 管理员/领导可以看到所有任务（包括已发布的）
-      if (keyword) {
-        sql += ' WHERE task_name LIKE ?';
-        params.push(`%${keyword}%`);
-      }
+    if (isFounderOrAdmin) {
+      // founder/admin可以看到所有任务
+      // 不需要额外条件
+    } else if (isDeptHead) {
+      // dept_head只能看到自己创建的任务
+      whereConditions.push('creator_id = ?');
+      params.push(req.user.id);
+    } else if (isStaff) {
+      // staff只能看到分配给自己的任务，且必须是已分配状态（不是pending_assignment）
+      whereConditions.push('assignee_id = ?');
+      whereConditions.push('status != ?');
+      params.push(req.user.id, 'pending_assignment');
     } else {
-      // 普通用户只能看到已发布并分配给自己负责的任务
-      // 只有发布了之后，相关负责人才能看到任务（status='not_started'且assignee_id=当前用户）
-      // 或者自己负责的任务（assignee_id=当前用户且状态为in_progress或completed）
-      sql += ` WHERE ((status = 'not_started' AND assignee_id = ?) OR (assignee_id = ? AND status IN ('in_progress', 'completed')))`;
-      params.push(req.user.id, req.user.id);
-      if (keyword) {
-        sql += ' AND task_name LIKE ?';
-        params.push(`%${keyword}%`);
-      }
+      // 其他角色或无角色，默认看不到任何任务
+      whereConditions.push('1 = 0'); // 永远为false，不返回任何结果
+    }
+    
+    // 添加关键词搜索
+    if (keyword) {
+      whereConditions.push('task_name LIKE ?');
+      params.push(`%${keyword}%`);
+    }
+    
+    // 组合WHERE条件
+    if (whereConditions.length > 0) {
+      sql += ' WHERE ' + whereConditions.join(' AND ');
     }
     
     sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
@@ -781,7 +903,7 @@ app.post('/api/tasks', auth, async (req, res) => {
     }
     const connection = await getConn();
     
-    // 检查用户是否有创建任务的权限（只有管理员/领导可以创建）
+    // 获取用户角色
     const [roles] = await connection.execute(`
       SELECT r.role_name 
       FROM roles r
@@ -790,17 +912,17 @@ app.post('/api/tasks', auth, async (req, res) => {
     `, [req.user.id]);
     
     const userRoles = roles.map(r => r.role_name);
-    // founder和admin对任务的权限完全相同
-    const isAdminOrLeader = userRoles.includes('admin') || 
-                          userRoles.includes('founder') ||
-                          userRoles.includes('leader') || 
-                          userRoles.includes('管理员') || 
-                          userRoles.includes('领导');
+    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
+    const isDeptHead = userRoles.includes('dept_head');
+    const isStaff = userRoles.includes('staff');
     
-    if (!isAdminOrLeader) {
+    // staff不能创建任务
+    if (isStaff) {
       await connection.end();
-      return res.status(403).json({ success: false, message: '只有管理员/领导可以创建任务' });
+      return res.status(403).json({ success: false, message: '普通员工不能创建任务' });
     }
+    
+    // founder/admin和dept_head可以创建任务
     // 唯一性：同创建者下不重名
     const [dup] = await connection.execute(
       'SELECT id FROM tasks WHERE task_name = ? AND creator_id = ? LIMIT 1',
@@ -813,11 +935,24 @@ app.post('/api/tasks', auth, async (req, res) => {
     // 转换日期时间格式
     const planStartDt = toMySQLDateTime(planStartTime);
     const dueDt = toMySQLDateTime(dueTime);
-    // 确保assignee_id不为NULL，如果为空则设置为创建者
-    const finalAssigneeId = ownerUserId || req.user.id;
+    
+    // 确定任务状态和分配逻辑
+    let finalAssigneeId = ownerUserId || req.user.id;
+    let taskStatus;
+    
+    if (ownerUserId && ownerUserId !== req.user.id) {
+      // 创建时指定了负责人（创建并分配）→ 状态为待处理
+      taskStatus = 'not_started';
+    } else {
+      // 创建时未指定负责人或指定自己 → 状态为待分配
+      taskStatus = 'pending_assignment';
+      // 如果是待分配状态，assignee_id应该为NULL或创建者自己
+      finalAssigneeId = req.user.id; // 临时设置为创建者，实际应该为NULL，但数据库不允许NULL
+    }
+    
     const [result] = await connection.execute(
       'INSERT INTO tasks (task_name, description, priority, status, progress, plan_start_time, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [name, description, priority, normalizeTaskStatus(status), Math.min(Math.max(progress, 0), 100), planStartDt, dueDt, finalAssigneeId, req.user.id]
+      [name, description, priority, taskStatus, Math.min(Math.max(progress, 0), 100), planStartDt, dueDt, finalAssigneeId, req.user.id]
     );
     const [rows] = await connection.execute(
       'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?',
@@ -836,11 +971,52 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const { name, description, priority, status, progress, dueTime, planStartTime, ownerUserId } = req.body;
     const connection = await getConn();
-    // 仅允许任务创建者修改
-    const [exists] = await connection.execute('SELECT id FROM tasks WHERE id = ? AND creator_id = ? LIMIT 1', [id, req.user.id]);
+    
+    // 获取用户角色
+    const [roles] = await connection.execute(`
+      SELECT r.role_name 
+      FROM roles r
+      JOIN user_roles ur ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+    `, [req.user.id]);
+    
+    const userRoles = roles.map(r => r.role_name);
+    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
+    const isDeptHead = userRoles.includes('dept_head');
+    const isStaff = userRoles.includes('staff');
+    
+    // 检查任务是否存在
+    const [exists] = await connection.execute('SELECT id, creator_id, assignee_id FROM tasks WHERE id = ? LIMIT 1', [id]);
     if (exists.length === 0) {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    
+    const task = exists[0];
+    
+    // 检查编辑权限
+    if (isFounderOrAdmin) {
+      // founder/admin可以编辑任何任务
+    } else if (isDeptHead) {
+      // dept_head只能编辑自己创建的任务
+      if (task.creator_id !== req.user.id) {
+        await connection.end();
+        return res.status(403).json({ success: false, message: '只能编辑自己创建的任务' });
+      }
+    } else if (isStaff) {
+      // staff只能编辑分配给自己的任务（仅限进度、状态等有限字段）
+      if (task.assignee_id !== req.user.id) {
+        await connection.end();
+        return res.status(403).json({ success: false, message: '只能编辑分配给自己的任务' });
+      }
+      // 限制可编辑字段：staff不能修改分配、优先级等
+      if (ownerUserId !== undefined && ownerUserId !== task.assignee_id) {
+        await connection.end();
+        return res.status(403).json({ success: false, message: '普通员工不能修改任务分配' });
+      }
+    } else {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '无权编辑此任务' });
     }
     // 转换日期时间格式
     const planStartDt = toMySQLDateTime(planStartTime);
@@ -970,7 +1146,43 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const connection = await getConn();
-    await connection.execute('DELETE FROM tasks WHERE id = ? AND creator_id = ?', [id, req.user.id]);
+    
+    // 获取用户角色
+    const [roles] = await connection.execute(`
+      SELECT r.role_name 
+      FROM roles r
+      JOIN user_roles ur ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+    `, [req.user.id]);
+    
+    const userRoles = roles.map(r => r.role_name);
+    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
+    const isDeptHead = userRoles.includes('dept_head');
+    const isStaff = userRoles.includes('staff');
+    
+    // 检查任务是否存在
+    const [tasks] = await connection.execute('SELECT id, creator_id FROM tasks WHERE id = ?', [id]);
+    if (tasks.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    
+    const task = tasks[0];
+    
+    // staff不能删除任务
+    if (isStaff) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '普通员工不能删除任务' });
+    }
+    
+    // dept_head只能删除自己创建的任务
+    if (isDeptHead && task.creator_id !== req.user.id) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '只能删除自己创建的任务' });
+    }
+    
+    // founder/admin可以删除任何任务，dept_head可以删除自己创建的任务
+    await connection.execute('DELETE FROM tasks WHERE id = ?', [id]);
     await connection.end();
     res.json({ success: true });
   } catch (e) {
@@ -985,21 +1197,49 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const { ownerUserId } = req.body;
     const connection = await getConn();
-    const [exists] = await connection.execute('SELECT id, assignee_id, status FROM tasks WHERE id = ? AND creator_id = ? LIMIT 1', [id, req.user.id]);
+    
+    // 获取用户角色
+    const [roles] = await connection.execute(`
+      SELECT r.role_name 
+      FROM roles r
+      JOIN user_roles ur ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+    `, [req.user.id]);
+    
+    const userRoles = roles.map(r => r.role_name);
+    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
+    const isDeptHead = userRoles.includes('dept_head');
+    const isStaff = userRoles.includes('staff');
+    
+    // staff不能分配任务
+    if (isStaff) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '普通员工不能分配任务' });
+    }
+    
+    // 检查任务是否存在
+    const [exists] = await connection.execute('SELECT id, assignee_id, status, creator_id FROM tasks WHERE id = ? LIMIT 1', [id]);
     if (exists.length === 0) {
       await connection.end();
-      return res.status(404).json({ success: false, message: '任务不存在或无权限' });
+      return res.status(404).json({ success: false, message: '任务不存在' });
     }
+    
     const task = exists[0];
+    
+    // dept_head只能分配自己创建的任务
+    if (isDeptHead && task.creator_id !== req.user.id) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '只能分配自己创建的任务' });
+    }
+    
     // 判断是否应该撤回分配：任务已分配（status='not_started'且assignee_id已分配）
     const isAssigned = task.status == 'not_started' && task.assignee_id != null;
     
     if (isAssigned) {
-      // 撤回分配：将assignee_id设置为创建者，这样原来的负责人就看不到此任务了
-      // 因为普通用户只能看到 assignee_id=当前用户 的任务
-      await connection.execute('UPDATE tasks SET assignee_id = ? WHERE id = ?', [req.user.id, id]);
+      // 撤回分配：将status改回pending_assignment，assignee_id设置为创建者
+      await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [req.user.id, 'pending_assignment', id]);
     } else {
-      // 分配任务：设置assignee_id和status
+      // 分配任务：设置assignee_id和status（从pending_assignment变为not_started）
       // 如果ownerUserId为空，则设置为创建者（避免assignee_id为NULL）
       const finalAssigneeId = ownerUserId || req.user.id;
       await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [finalAssigneeId, 'not_started', id]);
@@ -1018,17 +1258,52 @@ app.post('/api/tasks/:id/accept', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const connection = await getConn();
-    const [taskInfo] = await connection.execute('SELECT id, assignee_id, status FROM tasks WHERE id = ? LIMIT 1', [id]);
+    
+    // 获取用户角色
+    const [roles] = await connection.execute(`
+      SELECT r.role_name 
+      FROM roles r
+      JOIN user_roles ur ON r.id = ur.role_id
+      WHERE ur.user_id = ?
+    `, [req.user.id]);
+    
+    const userRoles = roles.map(r => r.role_name);
+    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
+    const isDeptHead = userRoles.includes('dept_head');
+    const isStaff = userRoles.includes('staff');
+    
+    const [taskInfo] = await connection.execute('SELECT id, assignee_id, status, creator_id FROM tasks WHERE id = ? LIMIT 1', [id]);
     if (taskInfo.length === 0) {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
     }
+    
     const task = taskInfo[0];
-    // 只有负责人能接收任务
-    if (task.assignee_id != req.user.id) {
+    
+    // staff只能接收分配给自己的任务，且必须是已分配状态
+    if (isStaff) {
+      if (task.assignee_id != req.user.id) {
+        await connection.end();
+        return res.status(403).json({ success: false, message: '只能接收分配给自己的任务' });
+      }
+      if (task.status == 'pending_assignment') {
+        await connection.end();
+        return res.status(403).json({ success: false, message: '任务尚未分配，无法接收' });
+      }
+    }
+    
+    // dept_head只能接收自己创建的任务
+    if (isDeptHead && task.creator_id !== req.user.id) {
+      await connection.end();
+      return res.status(403).json({ success: false, message: '只能接收自己创建的任务' });
+    }
+    
+    // 只有负责人能接收任务（founder/admin可以接收任意任务）
+    if (!isFounderOrAdmin && task.assignee_id != req.user.id) {
       await connection.end();
       return res.status(403).json({ success: false, message: '只有任务负责人才能接收任务' });
     }
+    
     // 只有状态为not_started的任务才能接收
     if (task.status != 'not_started') {
       await connection.end();

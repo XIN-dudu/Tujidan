@@ -97,13 +97,12 @@ class _TaskListPageState extends State<TaskListPage> {
 
   Future<void> _checkPermissions() async {
     final roles = await _userService.getUserRoles();
-    // founder和admin对任务的权限完全相同
-    final isAdminOrLeader = roles.contains('admin') || 
-                          roles.contains('founder') ||
-                          roles.contains('leader') || 
-                          roles.contains('管理员') || 
-                          roles.contains('领导');
-    setState(() => _canCreate = isAdminOrLeader);
+    // founder/admin和dept_head可以创建任务，staff不能创建
+    final isFounderOrAdmin = roles.contains('admin') || roles.contains('founder');
+    final isDeptHead = roles.contains('dept_head');
+    final isStaff = roles.contains('staff');
+    
+    setState(() => _canCreate = isFounderOrAdmin || isDeptHead);
   }
 
   Future<void> _load() async {
@@ -267,7 +266,162 @@ class _TaskListPageState extends State<TaskListPage> {
                   itemCount: _tasks.length,
                   itemBuilder: (context, index) {
                     final t = _tasks[index];
-                    return Card(
+                    return Dismissible(
+                      key: Key(t.id),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        margin: const EdgeInsets.only(bottom: 12.0),
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.red[400]!, Colors.red[600]!],
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.delete_forever,
+                              color: Colors.white,
+                              size: 32,
+                            ),
+                            SizedBox(height: 6),
+                            Text(
+                              '删除',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      confirmDismiss: (direction) async {
+                        // 显示确认对话框
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            title: Row(
+                              children: [
+                                Icon(Icons.warning_amber_rounded, 
+                                     color: Colors.orange[600], size: 24),
+                                const SizedBox(width: 8),
+                                const Text('删除任务'),
+                              ],
+                            ),
+                            content: const Text(
+                              '确定要删除这个任务吗？\n此操作无法撤销。',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(false),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.grey[600],
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                ),
+                                child: const Text('取消'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () => Navigator.of(context).pop(true),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red[600],
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                                child: const Text('删除'),
+                              ),
+                            ],
+                          ),
+                        );
+                        return confirmed ?? false;
+                      },
+                      onDismissed: (direction) async {
+                        // 执行删除操作
+                        try {
+                          final response = await TaskService.deleteTask(t.id);
+                          if (response.success) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Row(
+                                    children: [
+                                      Icon(Icons.check_circle, color: Colors.white),
+                                      const SizedBox(width: 8),
+                                      const Text('任务删除成功'),
+                                    ],
+                                  ),
+                                  backgroundColor: Colors.green[600],
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                            // 重新加载列表
+                            _load();
+                          } else {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Row(
+                                    children: [
+                                      Icon(Icons.error, color: Colors.white),
+                                      const SizedBox(width: 8),
+                                      Expanded(child: Text('删除失败: ${response.message}')),
+                                    ],
+                                  ),
+                                  backgroundColor: Colors.red[600],
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  duration: const Duration(seconds: 3),
+                                ),
+                              );
+                            }
+                            // 如果删除失败，重新加载列表
+                            _load();
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Row(
+                                  children: [
+                                    Icon(Icons.error, color: Colors.white),
+                                    const SizedBox(width: 8),
+                                    Expanded(child: Text('删除失败: $e')),
+                                  ],
+                                ),
+                                backgroundColor: Colors.red[600],
+                                behavior: SnackBarBehavior.floating,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                duration: const Duration(seconds: 3),
+                              ),
+                            );
+                          }
+                          // 如果删除失败，重新加载列表
+                          _load();
+                        }
+                      },
+                      child: Card(
                       margin: const EdgeInsets.only(bottom: 12),
                       child: ListTile(
                         leading: CircleAvatar(backgroundColor: _priorityColor(t.priority), child: const Icon(Icons.task, color: Colors.white)),
@@ -275,6 +429,7 @@ class _TaskListPageState extends State<TaskListPage> {
                         subtitle: Text('状态: ${t.status.displayName}  进度: ${t.progress}%'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => _open(t),
+                        ),
                       ),
                     );
                   },

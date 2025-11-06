@@ -18,8 +18,9 @@ class UserService {
       final String? token = await _getToken();
       if (token == null) return null;
 
+      // 使用 /api/verify 接口获取当前登录用户信息
       final response = await http.get(
-        Uri.parse('$_baseUrl/users'),
+        Uri.parse('$_baseUrl/verify'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -28,8 +29,18 @@ class UserService {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        if (data['success'] == true && data['users'] != null && data['users'].isNotEmpty) {
-          return data['users'][0];
+        if (data['success'] == true && data['user'] != null) {
+          final user = data['user'] as Map<String, dynamic>;
+          // 统一转换为下划线格式，保持与前端其他代码一致
+          return {
+            'id': user['id'],
+            'username': user['username'],
+            'email': user['email'],
+            'real_name': user['realName'], // 转换小驼峰为下划线
+            'phone': user['phone'],
+            'position': user['position'],
+            'avatar_url': user['avatarUrl'], // 转换小驼峰为下划线
+          };
         }
       }
     } catch (e) {

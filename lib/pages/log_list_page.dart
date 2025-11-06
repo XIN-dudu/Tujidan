@@ -504,14 +504,16 @@ class _LogListPageState extends State<LogListPage> {
                                         fontWeight: FontWeight.w500),
                                   ),
                                   const SizedBox(height: 6),
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
                                     children: [
                                       Icon(
                                         _getStatusInfo(log.logStatus)['icon'],
                                         size: 16,
                                         color: _getStatusInfo(log.logStatus)['color'],
                                       ),
-                                      const SizedBox(width: 4),
                                       Text(
                                         _getStatusInfo(log.logStatus)['text'],
                                         style: TextStyle(
@@ -520,10 +522,22 @@ class _LogListPageState extends State<LogListPage> {
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
+                                      if (log.taskId != null) ...[
+                                        Icon(Icons.task_alt,
+                                            size: 16, color: Colors.blue[600]),
+                                        const SizedBox(width: 4),
+                                        Text('已关联任务',
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.blue[600])),
+                                      ],
                                     ],
                                   ),
                                   const SizedBox(height: 8),
-                                  Row(
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 4,
+                                    crossAxisAlignment: WrapCrossAlignment.center,
                                     children: [
                                       if (log.type != null) ...[
                                         Icon(Icons.label, size: 16, color: Colors.blueGrey),
@@ -532,7 +546,6 @@ class _LogListPageState extends State<LogListPage> {
                                           log.type!,
                                           style: TextStyle(fontSize: 12, color: Colors.blueGrey[700]),
                                         ),
-                                        const SizedBox(width: 16),
                                       ],
                                       Icon(Icons.schedule,
                                           size: 16,
@@ -544,7 +557,6 @@ class _LogListPageState extends State<LogListPage> {
                                             fontSize: 12,
                                             color: Colors.grey[600]),
                                       ),
-                                      const SizedBox(width: 16),
                                       Icon(Icons.flag,
                                           size: 16,
                                           color:
@@ -559,16 +571,6 @@ class _LogListPageState extends State<LogListPage> {
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
-                                      if (log.taskId != null) ...[
-                                        const SizedBox(width: 16),
-                                        Icon(Icons.task_alt,
-                                            size: 16, color: Colors.blue[600]),
-                                        const SizedBox(width: 4),
-                                        Text('已关联任务',
-                                            style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.blue[600])),
-                                      ],
                                     ],
                                   ),
                                 ],

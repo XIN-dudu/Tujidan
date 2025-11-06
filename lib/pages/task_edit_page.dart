@@ -56,6 +56,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
       name: _name.text.trim(),
       description: _desc.text.trim(),
       assignee: _assigneeId ?? _assignee.text.trim(),
+      creator: widget.task?.creator ?? '', // 创建时后端会自动设置，编辑时保持原值
       deadline: _due ?? now,
       plannedStart: _planStart,
       priority: _priority,

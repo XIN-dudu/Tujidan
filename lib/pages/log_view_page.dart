@@ -641,6 +641,10 @@ class _LogViewPageState extends State<LogViewPage> {
         statusColor = Colors.blueGrey;
         statusIcon = Icons.radio_button_unchecked;
         break;
+      case TaskStatus.pending_assignment:
+        statusColor = Colors.purple;
+        statusIcon = Icons.pending;
+        break;
     }
 
     return Container(
