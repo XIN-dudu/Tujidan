@@ -514,6 +514,9 @@ function displayTasks(tasks) {
     
     tasks.forEach(task => {
         const row = document.createElement('tr');
+        // 优先使用后端返回的 assignee 对象（更明确）：assignee.realName -> assignee.username -> 回退到 id 字段
+        const assigneeObj = task.assignee || {};
+        const assigneeText = assigneeObj.realName || assigneeObj.username || (task.assignee_id ? ('用户' + task.assignee_id) : (task.owner_user_id ? ('用户' + task.owner_user_id) : '-'));
         row.innerHTML = `
             <td>${task.name}</td>
             <td><span class="badge bg-${getPriorityColor(task.priority)}">${getPriorityText(task.priority)}</span></td>
@@ -522,7 +525,7 @@ function displayTasks(tasks) {
                     <div class="progress-bar" style="width: ${task.progress}%">${task.progress}%</div>
                 </div>
             </td>
-            <td>用户${task.owner_user_id}</td>
+            <td>${assigneeText}</td>
             <td>${task.due_time ? formatDate(task.due_time) : '-'}</td>
             <td><span class="badge bg-success">进行中</span></td>
         `;

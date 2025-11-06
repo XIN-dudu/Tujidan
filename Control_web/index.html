@@ -19,6 +19,9 @@
         
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            /* Ensure default text on the whole page is readable */
+            color: var(--dark-color);
+            background-color: var(--light-bg);
         }
         
         .sidebar {
@@ -39,9 +42,9 @@
             font-weight: 700;
             letter-spacing: 0.5px;
         }
-        
+
         .sidebar .nav-link {
-            color: rgba(255,255,255,0.85);
+            color: #1a1d29 !important; /* 直接使用颜色值，不要用变量 */
             border-radius: 12px;
             margin: 4px 8px;
             padding: 12px 16px;
@@ -49,15 +52,15 @@
             font-weight: 500;
             will-change: transform;
         }
-        
+
         .sidebar .nav-link:hover {
-            color: white;
+            color: white !important;
             background: rgba(255,255,255,0.2);
             transform: translateX(5px);
         }
-        
+
         .sidebar .nav-link.active {
-            color: white;
+            color: white !important; /* 统一用白色 */
             background: rgba(255,255,255,0.25);
             transform: translateX(5px);
             font-weight: 600;
@@ -66,6 +69,8 @@
         .main-content {
             background-color: #f5f7fa;
             min-height: 100vh;
+            /* Make sure main content text is dark and readable */
+            color: var(--dark-color);
         }
         
         .top-bar {
@@ -83,6 +88,8 @@
             transition: transform 0.2s ease, box-shadow 0.2s ease;
             overflow: hidden;
             will-change: transform;
+            /* Ensure card text is dark */
+            color: var(--dark-color);
         }
         
         .card:hover {
@@ -128,13 +135,58 @@
         .table {
             border-radius: 15px;
             overflow: hidden;
+            background: white; /* keep table on white for clarity */
         }
         
         .table thead {
             background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
             color: white;
         }
-        
+
+        .table thead th {
+            font-weight: 700;
+            color: #fff;
+            vertical-align: middle;
+        }
+
+        /* 强化表头对比：在需要时改为深蓝色，保证文字可读 */
+        .table thead th {
+            background: #1e73be !important; /* 深蓝，提升对比度 */
+            color: #ffffff !important;
+            border-right: 1px solid rgba(255,255,255,0.08);
+            text-align: left;
+        }
+
+        /* 如果整个 thead 使用 gradient，保留但同时确保每个 th 有足够内边距 */
+        .table thead th {
+            padding: .75rem 1rem !important;
+        }
+
+        /* 加强 Bootstrap info 徽章（常见的浅蓝色圆点）的可读性 */
+        .badge.bg-info, .badge.info {
+            background: #12b5d6 !important; /* 更饱和的青色 */
+            color: #ffffff !important;     /* 字体白色 */
+            box-shadow: 0 2px 6px rgba(18,181,214,0.15);
+            border: 0;
+        }
+
+        /* 若徽章文字较小，略微增加字体并居中 */
+        .badge.bg-info {
+            font-size: 0.95rem;
+            min-width: 28px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+        }
+
+        /* Make tbody text dark and readable */
+        .table tbody td {
+            color: var(--dark-color);
+            vertical-align: middle;
+        }
+
         .table tbody tr {
             transition: background-color 0.15s ease;
         }
@@ -168,10 +220,12 @@
         
         .loading {
             display: none;
+            color: #6c757d; /* muted gray for loading text */
         }
         
         .page-section {
             display: none;
+            color: var(--dark-color); /* ensure page sections inherit dark text */
         }
         
         .page-section.active {
@@ -212,6 +266,90 @@
         #dashboard .card h5 {
             color: #6c757d;
             font-weight: 600;
+        }
+
+        /* Make modal content text dark */
+        .modal-content {
+            color: var(--dark-color);
+            background: #fff;
+        }
+
+        /* Improve contrast for small muted text */
+        .text-muted {
+            color: #6c757d !important;
+        }
+
+        /* Ensure links/buttons in tables are visible */
+        .table a {
+            color: var(--primary-color);
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .table a:hover {
+            text-decoration: underline;
+        }
+
+        /* 覆盖 Bootstrap 的 .table-light（默认白底），确保表头始终有高对比度背景 */
+        .table thead.table-light,
+        .table thead.table-light th {
+            background: #1e73be !important; /* 深蓝色背景 */
+            color: #fff !important;          /* 白色文字 */
+            border-bottom: 2px solid rgba(0,0,0,0.08) !important;
+        }
+
+        /* 如果表头内部有 .text-primary/.text-white 等辅助类，优先保证可读性 */
+        .table thead.table-light th * {
+            color: #fff !important;
+        }
+
+        /* 确保表格行上的圆形徽章在白底上有足够对比 */
+        .table tbody td .badge {
+            box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+        }
+
+        /* 最后兜底：避免任何 thead 被意外设置为纯白 */
+        .table thead th[style], .table thead th[class] {
+            background: #1e73be !important;
+            color: #fff !important;
+        }
+
+        /* 表头增加内阴影和底部分隔，提升与表体的分离感 */
+        .table thead th {
+            box-shadow: inset 0 -6px 12px rgba(0,0,0,0.04);
+        }
+
+        /* 表格内的操作按钮视觉增强：圆形、固定大小，图标颜色确保对比 */
+        .table .btn {
+            padding: 6px;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        .table .btn .bi {
+            font-size: 1.05rem;
+        }
+
+        /* 确保 outline 按钮在白背景下图标与边框可见 */
+        .table .btn-outline-danger {
+            background: #fff !important;
+            color: var(--danger-color) !important;
+            border: 2px solid rgba(230,57,70,0.18) !important;
+        }
+
+        .table .btn-outline-primary {
+            background: #fff !important;
+            color: var(--primary-color) !important;
+            border: 2px solid rgba(255,107,53,0.18) !important;
+        }
+
+        .table .btn-outline-danger .bi, .table .btn-outline-primary .bi {
+            color: inherit !important;
         }
     </style>
 </head>

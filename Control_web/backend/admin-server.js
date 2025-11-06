@@ -892,27 +892,46 @@ app.get('/api/logs', auth, async (req, res) => {
 app.get('/api/tasks', auth, async (req, res) => {
   try {
     const connection = await getConn();
-    
+
     const [tasks] = await connection.execute(`
-      SELECT t.*, 
-             o.username as owner_username, o.real_name as owner_real_name,
+      SELECT t.*,
+             a.username as assignee_username, a.real_name as assignee_real_name,
              c.username as creator_username, c.real_name as creator_real_name
       FROM tasks t
-      LEFT JOIN users o ON t.owner_user_id = o.id
-      LEFT JOIN users c ON t.creator_user_id = c.id
+             LEFT JOIN users a ON t.assignee_id = a.id
+             LEFT JOIN users c ON t.creator_id = c.id
       ORDER BY t.created_at DESC
-      LIMIT 100
+        LIMIT 100
     `);
-    
+
     await connection.end();
-    
-    res.json({ success: true, tasks });
+
+    // 将关联用户信息包装为更明确的结构，避免前端混用字段导致显示错位
+    const normalized = tasks.map(t => ({
+      // 先保留原始任务字段（展开 t）
+      ...t,
+      // 字段名映射：将数据库的 snake_case 转换为前端期望的 camelCase
+      name: t.task_name || null,              // 任务名称：task_name -> name
+      due_time: t.plan_end_time || null,      // 截止时间：plan_end_time -> due_time
+      // 明确的子对象，前端使用这些字段会更稳健
+      assignee: {
+        id: t.assignee_id || null,
+        username: t.assignee_username || null,
+        realName: t.assignee_real_name || null
+      },
+      creator: {
+        id: t.creator_id || null,
+        username: t.creator_username || null,
+        realName: t.creator_real_name || null
+      }
+    }));
+
+    res.json({ success: true, tasks: normalized });
   } catch (e) {
     console.error('获取任务列表失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
   }
 });
-
 // 启动服务器
 app.listen(PORT, () => {
   console.log(`🚀 管理后台服务器运行在 http://localhost:${PORT}`);
