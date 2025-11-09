@@ -6,6 +6,8 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -13,6 +15,106 @@ const PORT = process.env.PORT || 3001;
 // 中间件
 app.use(cors());
 app.use(express.json());
+
+// Swagger 配置
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Tujidan API',
+      version: '1.0.0',
+      description: 'Tujidan 后端 API 文档 - 任务管理系统',
+      contact: {
+        name: 'API Support',
+      },
+    },
+    servers: [
+      {
+        url: 'http://localhost:3001',
+        description: '开发环境',
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
+      schemas: {
+        User: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            username: { type: 'string' },
+            email: { type: 'string' },
+            realName: { type: 'string' },
+            phone: { type: 'string' },
+            position: { type: 'string' },
+            avatarUrl: { type: 'string' },
+          },
+        },
+        Task: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+            status: { type: 'string' },
+            progress: { type: 'integer', minimum: 0, maximum: 100 },
+            plan_start_time: { type: 'string', format: 'date-time' },
+            due_time: { type: 'string', format: 'date-time' },
+            owner_user_id: { type: 'string' },
+            creator_user_id: { type: 'string' },
+          },
+        },
+        Log: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            userId: { type: 'integer' },
+            title: { type: 'string' },
+            content: { type: 'string' },
+            type: { type: 'string', enum: ['work', 'study', 'life', 'other'] },
+            priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+            progress: { type: 'integer', minimum: 0, maximum: 100 },
+            startTime: { type: 'string', format: 'date-time' },
+            endTime: { type: 'string', format: 'date-time' },
+            taskId: { type: 'integer' },
+            logStatus: { type: 'string', enum: ['pending', 'completed', 'cancelled'] },
+          },
+        },
+      },
+    },
+    security: [
+      {
+        bearerAuth: [],
+      },
+    ],
+    tags: [
+      { name: '认证相关', description: '用户注册、登录、验证' },
+      { name: '系统', description: '系统健康检查' },
+      { name: '用户管理', description: '用户相关操作' },
+      { name: '任务管理', description: '任务 CRUD 操作' },
+      { name: '日志管理', description: '日志 CRUD 操作' },
+      { name: '权限管理', description: 'RBAC 权限管理' },
+    ],
+  },
+  apis: ['./simple_server_final.js'],
+};
+
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+// 添加 Swagger UI 路由
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// 提供 JSON 格式的文档
+app.get('/api-docs.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
 
 // 确保上传目录存在
 const uploadsDir = path.join(__dirname, 'uploads', 'avatars');
@@ -256,6 +358,70 @@ async function testConnection(retries = 3) {
 }
 
 
+/**
+ * @swagger
+ * /api/register:
+ *   post:
+ *     summary: 用户注册
+ *     tags: [认证相关]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - password
+ *               - realName
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名
+ *                 example: testuser
+ *               password:
+ *                 type: string
+ *                 description: 密码（至少6位）
+ *                 example: password123
+ *               email:
+ *                 type: string
+ *                 description: 邮箱（可选）
+ *                 example: test@example.com
+ *               realName:
+ *                 type: string
+ *                 description: 真实姓名
+ *                 example: 张三
+ *               phone:
+ *                 type: string
+ *                 description: 手机号（可选）
+ *                 example: 13800138000
+ *               position:
+ *                 type: string
+ *                 description: 职位（可选）
+ *                 example: 开发工程师
+ *     responses:
+ *       201:
+ *         description: 注册成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 注册成功
+ *                 token:
+ *                   type: string
+ *                   example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: 参数错误或用户名已存在
+ */
 // 注册接口
 app.post('/api/register', async (req, res) => {
   try {
@@ -349,6 +515,55 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/login:
+ *   post:
+ *     summary: 用户登录
+ *     tags: [认证相关]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - password
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名或邮箱
+ *                 example: testuser
+ *               password:
+ *                 type: string
+ *                 description: 密码
+ *                 example: password123
+ *     responses:
+ *       200:
+ *         description: 登录成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 登录成功
+ *                 token:
+ *                   type: string
+ *                   example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       401:
+ *         description: 用户名或密码错误
+ *       500:
+ *         description: 服务器内部错误
+ */
 // 登录接口
 app.post('/api/login', async (req, res) => {
   try {
@@ -420,6 +635,30 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/verify:
+ *   get:
+ *     summary: 验证 Token
+ *     tags: [认证相关]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Token 有效
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Token 无效或未提供
+ */
 // 验证token接口
 app.get('/api/verify', async (req, res) => {
   try {
@@ -472,6 +711,31 @@ app.get('/api/verify', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/health:
+ *   get:
+ *     summary: 健康检查
+ *     tags: [系统]
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: 服务器运行正常
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 服务器运行正常
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ */
 // 健康检查接口
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -481,6 +745,47 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+/**
+ * @swagger
+ * /api/user/avatar:
+ *   post:
+ *     summary: 上传头像
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - avatar
+ *             properties:
+ *               avatar:
+ *                 type: string
+ *                 format: binary
+ *                 description: 图片文件（jpeg/jpg/png/gif/webp，最大5MB）
+ *     responses:
+ *       200:
+ *         description: 上传成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 头像上传成功
+ *                 avatarUrl:
+ *                   type: string
+ *                   example: data:image/png;base64,iVBORw0KGgo...
+ *       400:
+ *         description: 未选择文件或文件格式不正确
+ */
 // 上传头像接口 - 将图片转换为 base64 字符串存储
 app.post('/api/user/avatar', auth, upload.single('avatar'), async (req, res) => {
   try {
@@ -584,6 +889,41 @@ app.post('/api/user/avatar', auth, upload.single('avatar'), async (req, res) => 
 
 // ---- Users（用户搜索） ----
 
+/**
+ * @swagger
+ * /api/users:
+ *   get:
+ *     summary: 获取用户列表
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 users:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       username:
+ *                         type: string
+ *                       avatar_url:
+ *                         type: string
+ *                       created_at:
+ *                         type: string
+ *                       updated_at:
+ *                         type: string
+ */
 // 获取用户列表
 app.get('/api/users', auth, async (req, res) => {
   try {
@@ -608,6 +948,39 @@ app.get('/api/users', auth, async (req, res) => {
     res.status(500).json({ success: false, message: '服务器内部错误' });
   }
 });
+/**
+ * @swagger
+ * /api/tasks/{id}:
+ *   get:
+ *     summary: 获取任务详情
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/Task'
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足
+ */
 // 获取单个任务详情
 app.get('/api/tasks/:id', auth, async (req, res) => {
   try {
@@ -667,6 +1040,48 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/users/search:
+ *   get:
+ *     summary: 搜索用户
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: keyword
+ *         schema:
+ *           type: string
+ *         description: 搜索关键词（用户名或真实姓名）
+ *         example: 张三
+ *     responses:
+ *       200:
+ *         description: 搜索成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 users:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       username:
+ *                         type: string
+ *                       real_name:
+ *                         type: string
+ *                       email:
+ *                         type: string
+ *                       avatar_url:
+ *                         type: string
+ */
 app.get('/api/users/search', auth, async (req, res) => {
   try {
     const connection = await getConn();
@@ -702,6 +1117,34 @@ app.get('/api/users/search', auth, async (req, res) => {
 
 // ---- RBAC 相关接口 ----
 
+/**
+ * @swagger
+ * /api/user/permissions:
+ *   get:
+ *     summary: 获取当前用户角色和权限
+ *     tags: [权限管理]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 roles:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                 permissions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ */
 // 获取用户角色和权限
 app.get('/api/user/permissions', auth, async (req, res) => {
   try {
@@ -738,6 +1181,18 @@ app.get('/api/user/permissions', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/roles:
+ *   get:
+ *     summary: 获取所有角色
+ *     tags: [权限管理]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ */
 // 获取所有角色
 app.get('/api/roles', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -758,6 +1213,18 @@ app.get('/api/roles', auth, checkPermission('role:view'), async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/permissions:
+ *   get:
+ *     summary: 获取所有权限
+ *     tags: [权限管理]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ */
 // 获取所有权限
 app.get('/api/permissions', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -775,6 +1242,24 @@ app.get('/api/permissions', auth, checkPermission('role:view'), async (req, res)
   }
 });
 
+/**
+ * @swagger
+ * /api/roles/{roleId}/permissions:
+ *   get:
+ *     summary: 获取角色权限
+ *     tags: [权限管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: roleId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ */
 // 获取角色权限
 app.get('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -797,6 +1282,37 @@ app.get('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), as
   }
 });
 
+/**
+ * @swagger
+ * /api/users/{userId}/roles:
+ *   post:
+ *     summary: 为用户分配角色
+ *     tags: [权限管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - roleIds
+ *             properties:
+ *               roleIds:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *     responses:
+ *       200:
+ *         description: 分配成功
+ */
 // 为用户分配角色
 app.post('/api/users/:userId/roles', auth, checkPermission('user:assign_role'), async (req, res) => {
   try {
@@ -828,6 +1344,37 @@ app.post('/api/users/:userId/roles', auth, checkPermission('user:assign_role'), 
   }
 });
 
+/**
+ * @swagger
+ * /api/roles/{roleId}/permissions:
+ *   post:
+ *     summary: 为角色分配权限
+ *     tags: [权限管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: roleId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - permissionIds
+ *             properties:
+ *               permissionIds:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *     responses:
+ *       200:
+ *         description: 分配成功
+ */
 // 为角色分配权限
 app.post('/api/roles/:roleId/permissions', auth, checkPermission('role:assign_permission'), async (req, res) => {
   try {
@@ -859,6 +1406,43 @@ app.post('/api/roles/:roleId/permissions', auth, checkPermission('role:assign_pe
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks:
+ *   get:
+ *     summary: 获取任务列表
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: keyword
+ *         schema:
+ *           type: string
+ *         description: 搜索关键词
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           maximum: 50
+ *         description: 返回数量限制
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Task'
+ */
 // ---- Tasks ----
 app.get('/api/tasks', auth, async (req, res) => {
   try {
@@ -924,6 +1508,77 @@ app.get('/api/tasks', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks:
+ *   post:
+ *     summary: 创建任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 description: 任务名称（必填，最大64字符）
+ *                 example: 完成项目开发
+ *               description:
+ *                 type: string
+ *                 description: 任务描述
+ *                 example: 完成前端和后端开发
+ *               priority:
+ *                 type: string
+ *                 enum: [low, medium, high]
+ *                 default: low
+ *                 description: 优先级
+ *               status:
+ *                 type: string
+ *                 default: not_started
+ *                 description: 任务状态
+ *               progress:
+ *                 type: integer
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 default: 0
+ *                 description: 进度（0-100）
+ *               dueTime:
+ *                 type: string
+ *                 format: date-time
+ *                 description: 截止时间
+ *               planStartTime:
+ *                 type: string
+ *                 format: date-time
+ *                 description: 计划开始时间
+ *               ownerUserId:
+ *                 type: integer
+ *                 description: 负责人ID
+ *     responses:
+ *       201:
+ *         description: 创建成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 task:
+ *                   $ref: '#/components/schemas/Task'
+ *       400:
+ *         description: 参数错误
+ *       403:
+ *         description: 权限不足
+ *       409:
+ *         description: 任务名称重复
+ */
 app.post('/api/tasks', auth, async (req, res) => {
   try {
     const { name, description = null, priority = 'low', status = 'not_started', progress = 0, dueTime = null, planStartTime = null, ownerUserId } = req.body;
@@ -998,6 +1653,56 @@ app.post('/api/tasks', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}:
+ *   patch:
+ *     summary: 更新任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               priority:
+ *                 type: string
+ *                 enum: [low, medium, high]
+ *               status:
+ *                 type: string
+ *               progress:
+ *                 type: integer
+ *                 minimum: 0
+ *                 maximum: 100
+ *               dueTime:
+ *                 type: string
+ *                 format: date-time
+ *               planStartTime:
+ *                 type: string
+ *                 format: date-time
+ *               ownerUserId:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足
+ */
 app.patch('/api/tasks/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1060,6 +1765,46 @@ function getTaskStatusFromProgress(progress) {
   }
 }
 
+/**
+ * @swagger
+ * /api/tasks/{id}/progress:
+ *   patch:
+ *     summary: 更新任务进度
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - progress
+ *             properties:
+ *               progress:
+ *                 type: integer
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 description: 进度值（0-100）
+ *                 example: 50
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       400:
+ *         description: 进度值无效
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足
+ */
 // 更新任务进度
 app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
   try {
@@ -1103,60 +1848,29 @@ app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
   }
 });
 
-// 根据进度决定任务状态
-function getTaskStatusFromProgress(progress) {
-  if (progress <= 0) {
-    return 'not_started';
-  } else if (progress > 0 && progress < 100) {
-    return 'in_progress';
-  } else {
-    return 'completed';
-  }
-}
-
-// 更新任务进度
-app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const { progress } = req.body;
-
-    if (typeof progress !== 'number' || progress < 0 || progress > 100) {
-      return res.status(400).json({ success: false, message: '进度值必须是0-100的数字' });
-    }
-
-    const connection = await getConn();
-
-    // 检查任务是否存在以及用户是否有权限更新
-    const [tasks] = await connection.execute('SELECT id, assignee_id, creator_id FROM tasks WHERE id = ?', [id]);
-    if (tasks.length === 0) {
-      await connection.end();
-      return res.status(404).json({ success: false, message: '任务不存在' });
-    }
-
-    const task = tasks[0];
-    // 只有负责人或创建者可以更新进度
-    if (task.assignee_id !== req.user.id && task.creator_id !== req.user.id) {
-      await connection.end();
-      return res.status(403).json({ success: false, message: '无权更新此任务的进度' });
-    }
-
-    const newStatus = getTaskStatusFromProgress(progress);
-
-    await connection.execute(
-      'UPDATE tasks SET progress = ?, status = ? WHERE id = ?',
-      [progress, newStatus, id]
-    );
-
-    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
-    await connection.end();
-
-    res.json({ success: true, task: rows[0] });
-  } catch (e) {
-    console.error('更新任务进度失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
-  }
-});
-
+/**
+ * @swagger
+ * /api/tasks/{id}:
+ *   delete:
+ *     summary: 删除任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足
+ */
 app.delete('/api/tasks/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1206,6 +1920,38 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}/publish:
+ *   post:
+ *     summary: 发布/分配任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               ownerUserId:
+ *                 type: integer
+ *                 description: 负责人ID（可选，不传则撤回分配）
+ *     responses:
+ *       200:
+ *         description: 操作成功
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足
+ */
 // 任务发布（指定负责人并置为未开始）
 app.post('/api/tasks/:id/publish', auth, async (req, res) => {
   try {
@@ -1268,6 +2014,31 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}/accept:
+ *   post:
+ *     summary: 接收任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     responses:
+ *       200:
+ *         description: 接收成功
+ *       400:
+ *         description: 任务状态不允许接收
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足
+ */
 // 接收任务（接单/接受）
 app.post('/api/tasks/:id/accept', auth, async (req, res) => {
   try {
@@ -1334,6 +2105,29 @@ app.post('/api/tasks/:id/accept', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}/cancel-accept:
+ *   post:
+ *     summary: 取消接收任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     responses:
+ *       200:
+ *         description: 取消成功
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足
+ */
 // 取消接收任务（将状态改回待开始）
 app.post('/api/tasks/:id/cancel-accept', auth, async (req, res) => {
   try {
@@ -1361,6 +2155,71 @@ app.post('/api/tasks/:id/cancel-accept', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/logs:
+ *   post:
+ *     summary: 创建日志
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - content
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 description: 日志标题（可选）
+ *               content:
+ *                 type: string
+ *                 description: 日志内容（必填）
+ *                 example: 今天完成了项目开发
+ *               type:
+ *                 type: string
+ *                 enum: [work, study, life, other]
+ *                 description: 日志类型
+ *               priority:
+ *                 type: string
+ *                 enum: [low, medium, high]
+ *                 default: low
+ *               progress:
+ *                 type: integer
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 default: 0
+ *               timeFrom:
+ *                 type: string
+ *                 format: date-time
+ *                 description: 开始时间
+ *               timeTo:
+ *                 type: string
+ *                 format: date-time
+ *                 description: 结束时间
+ *               taskId:
+ *                 type: integer
+ *                 description: 关联任务ID
+ *               createNewTask:
+ *                 type: object
+ *                 description: 创建新任务（可选）
+ *               syncTaskProgress:
+ *                 type: boolean
+ *                 default: false
+ *                 description: 是否同步任务进度
+ *               logStatus:
+ *                 type: string
+ *                 enum: [pending, completed, cancelled]
+ *                 default: pending
+ *     responses:
+ *       201:
+ *         description: 创建成功
+ *       400:
+ *         description: 参数错误
+ */
 // ---- Logs ----
 app.post('/api/logs', auth, async (req, res) => {
   try {
@@ -1423,6 +2282,60 @@ app.post('/api/logs', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/logs:
+ *   get:
+ *     summary: 获取日志列表
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [work, study, life, other]
+ *         description: 日志类型过滤
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *         description: 搜索关键词
+ *       - in: query
+ *         name: startTime
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 开始时间
+ *       - in: query
+ *         name: endTime
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 结束时间
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 获取日志成功
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Log'
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ */
 app.get('/api/logs', auth, async (req, res) => {
   try {
     console.log('📋 收到日志查询请求:', req.query);
@@ -1498,6 +2411,27 @@ app.get('/api/logs', auth, async (req, res) => {
 
 
 
+/**
+ * @swagger
+ * /api/logs/{id}:
+ *   get:
+ *     summary: 获取日志详情
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *       404:
+ *         description: 日志不存在
+ */
 app.get('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1515,6 +2449,60 @@ app.get('/api/logs/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/logs/{id}:
+ *   patch:
+ *     summary: 更新日志
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               content:
+ *                 type: string
+ *               type:
+ *                 type: string
+ *                 enum: [work, study, life, other]
+ *               priority:
+ *                 type: string
+ *                 enum: [low, medium, high]
+ *               progress:
+ *                 type: integer
+ *                 minimum: 0
+ *                 maximum: 100
+ *               timeFrom:
+ *                 type: string
+ *                 format: date-time
+ *               timeTo:
+ *                 type: string
+ *                 format: date-time
+ *               taskId:
+ *                 type: integer
+ *               syncTaskProgress:
+ *                 type: boolean
+ *               logStatus:
+ *                 type: string
+ *                 enum: [pending, completed, cancelled]
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       404:
+ *         description: 日志不存在
+ */
 app.patch('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1614,6 +2602,27 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/logs/{id}:
+ *   delete:
+ *     summary: 删除日志
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       404:
+ *         description: 日志不存在
+ */
 app.delete('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
