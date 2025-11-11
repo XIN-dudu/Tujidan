@@ -3,6 +3,7 @@ import '../models/log_entry.dart';
 import '../models/task.dart';
 import '../services/log_service.dart';
 import '../services/task_service.dart';
+import '../services/log_keyword_service.dart';
 
 enum ViewType { month, week, day }
 
@@ -21,6 +22,7 @@ class _LogViewPageState extends State<LogViewPage> {
   DateTime? _selectedDate; // 选中的日期
   List<LogEntry> _logs = [];
   List<Task> _tasks = [];
+  Map<String, List<String>> _logKeywords = {}; // 日志ID -> 关键词列表
   bool _isLoading = false;
 
   @override
@@ -92,10 +94,20 @@ class _LogViewPageState extends State<LogViewPage> {
       );
       final taskResp = await TaskService.getTasks();
 
+      // 加载关键词（仅当有日志时）
+      Map<String, List<String>> keywordMap = {};
+      if (logResp.success && logResp.data != null && logResp.data!.isNotEmpty) {
+        keywordMap = await LogKeywordService.getKeywordsRange(
+          start: startDate,
+          end: endDate.add(const Duration(hours: 23, minutes: 59, seconds: 59)),
+        );
+      }
+
       if (mounted) {
         setState(() {
           _logs = logResp.success && logResp.data != null ? logResp.data! : [];
           _tasks = taskResp.success && taskResp.data != null ? taskResp.data! : [];
+          _logKeywords = keywordMap;
           _isLoading = false;
         });
       }
@@ -1151,6 +1163,42 @@ class _LogViewPageState extends State<LogViewPage> {
                 ),
               ],
             ),
+            // 关键词标签
+            if (_logKeywords[log.id]?.isNotEmpty == true) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: _logKeywords[log.id]!
+                    .map((keyword) => Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: Colors.blue[50],
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.blue[200]!,
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.tag_rounded, size: 12, color: Colors.blue[700]),
+                              const SizedBox(width: 4),
+                              Text(
+                                keyword,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.blue[700],
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
           ],
         ),
       ),

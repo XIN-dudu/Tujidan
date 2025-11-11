@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
+const { extractKeywords } = require('./nlp_service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -2264,6 +2265,39 @@ app.post('/api/logs', auth, async (req, res) => {
       [req.user.id, title, content, type, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'pending']
     );
 
+    // ！！！！！！！！！！！！！！！！！！！！！！暂时关闭关键词提取功能！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！
+     
+    //异步提取关键词并写入关键词表（不阻塞响应）
+    // const logId = lRes.insertId;
+
+    // (async () => {
+    //   let kwConnection;
+    //   try {
+    //     const fullText = `${title || ''} ${content || ''}`.trim();
+    //     if (fullText) {
+    //       const keywords = await extractKeywords(fullText, 5);
+    //       if (keywords.length > 0) {
+    //         // 创建新的数据库连接用于异步操作
+    //         kwConnection = await getConn();
+    //         const values = keywords.map(k => [logId, k.word, k.score]);
+    //         await kwConnection.execute(
+    //           'INSERT INTO log_keywords (log_id, keyword, score) VALUES ' +
+    //           values.map(() => '(?,?,?)').join(','),
+    //           values.flat()
+    //         );
+    //         console.log(`✅ 日志 ${logId} 关键词提取成功:`, keywords.map(k => k.word).join(', '));
+    //       }
+    //     }
+    //   } catch (err) {
+    //     console.error(`❌ 日志 ${logId} 关键词提取失败:`, err.message);
+    //   } finally {
+    //     // 确保关闭连接
+    //     if (kwConnection) {
+    //       await kwConnection.end();
+    //     }
+    //   }
+    // })();
+
     if (syncTaskProgress && finalTaskId) {
       await connection.execute('UPDATE tasks SET progress = ?, priority = ? WHERE id = ?', [Math.min(Math.max(progress, 0), 100), priority, finalTaskId]);
     }
@@ -2449,6 +2483,78 @@ app.get('/api/logs/:id', auth, async (req, res) => {
   }
 });
 
+// 获取单个日志的关键词
+app.get('/api/logs/:id/keywords', auth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    
+    // 先验证日志是否属于当前用户
+    const [logRows] = await connection.execute(
+      'SELECT id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1',
+      [id, req.user.id]
+    );
+    
+    if (logRows.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '日志不存在' });
+    }
+    
+    // 获取关键词
+    const [kwRows] = await connection.execute(
+      'SELECT keyword, score FROM log_keywords WHERE log_id = ? ORDER BY score DESC',
+      [id]
+    );
+    
+    await connection.end();
+    res.json({ success: true, data: kwRows });
+  } catch (e) {
+    console.error('获取关键词失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+// 批量获取时间范围内日志的关键词
+app.get('/api/logs/keywords', auth, async (req, res) => {
+  try {
+    const { startTime, endTime } = req.query;
+    
+    if (!startTime || !endTime) {
+      return res.status(400).json({ success: false, message: '缺少时间范围参数' });
+    }
+    
+    const connection = await getConn();
+    
+    // 获取当前用户在时间范围内的所有日志及其关键词
+    const [rows] = await connection.execute(`
+      SELECT lk.log_id, lk.keyword, lk.score
+      FROM log_keywords lk
+      INNER JOIN logs l ON lk.log_id = l.id
+      WHERE l.author_user_id = ? AND l.time_from >= ? AND l.time_from <= ?
+      ORDER BY lk.log_id, lk.score DESC
+    `, [req.user.id, startTime, endTime]);
+    
+    await connection.end();
+    
+    // 按 log_id 分组
+    const keywordMap = {};
+    rows.forEach(row => {
+      if (!keywordMap[row.log_id]) {
+        keywordMap[row.log_id] = [];
+      }
+      keywordMap[row.log_id].push({
+        keyword: row.keyword,
+        weight: row.weight
+      });
+    });
+    
+    res.json({ success: true, data: keywordMap });
+  } catch (e) {
+    console.error('批量获取关键词失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
 /**
  * @swagger
  * /api/logs/{id}:
@@ -2627,7 +2733,13 @@ app.delete('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const connection = await getConn();
+    
+    // 先删除关联的关键词
+    await connection.execute('DELETE FROM log_keywords WHERE log_id = ?', [id]);
+    
+    // 再删除日志
     await connection.execute('DELETE FROM logs WHERE id = ? AND author_user_id = ?', [id, req.user.id]);
+    
     await connection.end();
     res.json({ success: true });
   } catch (e) {
