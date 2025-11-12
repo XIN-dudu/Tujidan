@@ -4,8 +4,10 @@ import '../models/task.dart';
 import '../services/log_service.dart';
 import '../services/task_service.dart';
 import '../services/log_keyword_service.dart';
+import '../widgets/log_activity_chart.dart';
+import '../widgets/log_type_pie_chart.dart'; // 导入饼图组件
 
-enum ViewType { month, week, day }
+enum ViewType { month, week, day, stats } // 添加 stats 视图类型
 
 class LogViewPage extends StatefulWidget {
   final LogEntry? logEntry; // 要查看的日志
@@ -86,6 +88,10 @@ class _LogViewPageState extends State<LogViewPage> {
           startDate = DateTime(_currentDate.year, _currentDate.month, _currentDate.day);
           endDate = startDate.add(const Duration(days: 1));
           break;
+        case ViewType.stats:
+          startDate = DateTime(_currentDate.year, _currentDate.month, 1);
+          endDate = DateTime(_currentDate.year, _currentDate.month + 1, 0);
+          break;
       }
 
       final logResp = await LogService.getLogsFiltered(
@@ -150,6 +156,9 @@ class _LogViewPageState extends State<LogViewPage> {
         case ViewType.day:
           _currentDate = _currentDate.add(Duration(days: direction));
           break;
+        case ViewType.stats:
+          // 统计视图不支持日期导航
+          return;
       }
     });
     _loadLogs();
@@ -186,6 +195,8 @@ class _LogViewPageState extends State<LogViewPage> {
         return '${weekStart.month}/${weekStart.day} - ${weekEnd.month}/${weekEnd.day}';
       case ViewType.day:
         return '${_currentDate.year}年${_currentDate.month}月${_currentDate.day}日';
+      case ViewType.stats:
+        return '统计分析';
     }
   }
 
@@ -288,6 +299,7 @@ class _LogViewPageState extends State<LogViewPage> {
                               _buildViewButton('月视图', ViewType.month, Icons.calendar_month_rounded),
                               _buildViewButton('周视图', ViewType.week, Icons.view_week_rounded),
                               _buildViewButton('日视图', ViewType.day, Icons.today_rounded),
+                              _buildViewButton('统计图', ViewType.stats, Icons.pie_chart_rounded),
                             ],
                           ),
                         ),
@@ -403,6 +415,108 @@ class _LogViewPageState extends State<LogViewPage> {
         return _buildWeekView();
       case ViewType.day:
         return _buildDayView();
+      case ViewType.stats:
+        return _buildStatsView();
+    }
+  }
+
+  // 构建统计视图
+  Widget _buildStatsView() {
+    // 1. 聚合日志类型数据
+    final typeCounts = <String, int>{};
+    final monthlyLogs = _logs.where((log) =>
+        log.time.year == _currentDate.year && log.time.month == _currentDate.month);
+
+    for (var log in monthlyLogs) {
+      typeCounts[log.type ?? 'other'] = (typeCounts[log.type ?? 'other'] ?? 0) + 1;
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // --- 日志类型分布饼图 ---
+          Text(
+            '${_currentDate.year}年${_currentDate.month}月 日志类型分布',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          LogTypePieChart(typeCounts: typeCounts, chartRadius: 120),
+          const SizedBox(height: 32),
+
+          // --- 日志活跃度趋势图 ---
+          const Text(
+            '本月日志活跃度',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          _buildMonthlyActivityChart(),
+        ],
+      ),
+    );
+  }
+
+  // 构建月度活跃度图表
+  Widget _buildMonthlyActivityChart() {
+    final Map<DateTime, int> dailyCounts = {};
+
+    // 筛选出当前月份的日志
+    final monthlyLogs = _logs.where((log) =>
+        log.time.year == _currentDate.year && log.time.month == _currentDate.month);
+
+    // 初始化当月的每一天
+    final daysInMonth = DateTime(_currentDate.year, _currentDate.month + 1, 0).day;
+    for (int i = 1; i <= daysInMonth; i++) {
+      final day = DateTime(_currentDate.year, _currentDate.month, i);
+      dailyCounts[day] = 0;
+    }
+
+    // 统计每天的日志数量
+    for (var log in monthlyLogs) {
+      final day = DateTime(log.time.year, log.time.month, log.time.day);
+      dailyCounts[day] = (dailyCounts[day] ?? 0) + 1;
+    }
+    return LogActivityChart(dailyCounts: dailyCounts);
+  }
+
+  // 聚合数据并构建饼图
+  Widget buildMonthlyTypePie(List<LogEntry> logs, DateTime date) {
+    final Map<String, int> typeCounts = {
+      'work': 0,
+      'study': 0,
+      'life': 0,
+      'other': 0,
+    };
+
+    // 筛选出当前月份的日志
+    final monthlyLogs = logs.where((log) =>
+        log.time.year == date.year && log.time.month == date.month);
+
+    // 统计各类型数量
+    for (var log in monthlyLogs) {
+      final type = log.type;
+      if (type != null && typeCounts.containsKey(type)) {
+        typeCounts[type] = typeCounts[type]! + 1;
+      }
+    }
+
+    return LogTypePieChart(
+      typeCounts: typeCounts,
+      chartRadius: 120,
+    );
+  }
+
+  // 根据日志数量获取热力图颜色
+  Color _getHeatmapColor(int count) {
+    if (count > 5) {
+      return Colors.blue.shade700; // 深蓝
+    } else if (count >= 3) {
+      return Colors.blue.shade500; // 中蓝
+    } else if (count >= 1) {
+      return Colors.blue.shade200; // 浅蓝
+    } else {
+      return Colors.grey.shade200; // 灰色
     }
   }
 

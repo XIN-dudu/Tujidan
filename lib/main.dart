@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:test_flutter/auth_service.dart';
 import 'package:test_flutter/login_page.dart';
 import 'package:test_flutter/pages/log_list_page.dart';
@@ -6,7 +7,9 @@ import 'package:test_flutter/pages/log_view_page.dart';
 import 'package:test_flutter/pages/user_profile_page.dart';
 import 'package:test_flutter/pages/task_list_page.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting('zh_CN', null);
   runApp(const MyApp());
 }
 

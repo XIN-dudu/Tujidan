@@ -1097,16 +1097,8 @@ app.get('/api/users/search', auth, async (req, res) => {
       sql = 'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 ORDER BY id DESC LIMIT 50';
       params = [];
     }
-    // 新增：服务端日志输出，便于定位命中的是用户搜索处理器
-    console.log('[GET /api/users/search] keyword =', keyword);
-    console.log('[GET /api/users/search] sql =', sql);
-    console.log('[GET /api/users/search] params =', params);
 
     const [userRows] = await connection.execute(sql, params);
-    console.log('[GET /api/users/search] rows.length =', userRows.length);
-    if (userRows.length > 0) {
-      console.log('[GET /api/users/search] sample row =', userRows[0]);
-    }
 
     await connection.end();
     return res.json({ success: true, users: userRows });
@@ -2372,15 +2364,10 @@ app.post('/api/logs', auth, async (req, res) => {
  */
 app.get('/api/logs', auth, async (req, res) => {
   try {
-    console.log('📋 收到日志查询请求:', req.query);
-    console.log('👤 当前用户:', req.user);
-    
     const connection = await getConn();
     const { type, q, startDate, endDate, startTime, endTime } = req.query;
 
     // 日志始终只显示当前用户自己的
-    console.log('🔐 权限策略: 仅显示用户自己的日志');
-    
     const params = [req.user.id];
     let sql = 'SELECT * FROM logs WHERE author_user_id = ?';
 
@@ -2396,7 +2383,6 @@ app.get('/api/logs', auth, async (req, res) => {
     if (rangeStart && rangeEnd) {
       sql += ' AND time_from BETWEEN ? AND ?';
       params.push(rangeStart, rangeEnd);
-      console.log('📅 时间范围:', rangeStart, '至', rangeEnd);
     }
 
     // 搜索关键词过滤
@@ -2408,13 +2394,8 @@ app.get('/api/logs', auth, async (req, res) => {
     // 时间倒序，限制100条
     sql += ' ORDER BY created_at DESC LIMIT 100';
 
-    console.log('🔍 执行SQL:', sql);
-    console.log('📝 参数:', params);
-
     const [rows] = await connection.execute(sql, params);
     await connection.end();
-
-    console.log(`✅ 查询成功，找到 ${rows.length} 条日志`);
 
     // 返回前端固定结构
     res.json({
@@ -2614,16 +2595,6 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false, logStatus } = req.body;
     
-    console.log(`📝 更新日志 ${id}:`, {
-      logStatus,
-      title,
-      content,
-      type,
-      priority,
-      timeFrom,
-      timeTo,
-      taskId
-    });
     const connection = await getConn();
     const [exists] = await connection.execute('SELECT id, task_id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
     if (exists.length === 0) {
@@ -2695,11 +2666,6 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
     }
     const [rows] = await connection.execute('SELECT * FROM logs WHERE id = ?', [id]);
     await connection.end();
-    
-    console.log(`✅ 日志 ${id} 更新完成:`, {
-      log_status: rows[0]?.log_status,
-      title: rows[0]?.title
-    });
     
     res.json({ success: true, log: rows[0] });
   } catch (e) {
