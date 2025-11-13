@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
@@ -9,6 +10,7 @@ const fs = require('fs');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 const { extractKeywords } = require('./nlp_service');
+const { generateMBTIAnalysis, generateDevelopmentSuggestions, generateMBTIFromLogsText } = require('./llm_service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -192,6 +194,7 @@ const dbConfig = {
 };
 
 const JWT_SECRET = 'your_jwt_secret_key_here_change_this_in_production';
+const DASHBOARD_LOG_LIMIT = 8;
 
 // 工具: 规范化前端传来的时间为 MySQL DATETIME 格式
 function toMySQLDateTime(value) {
@@ -315,6 +318,60 @@ async function hasPermission(userId, permission) {
 // 获取数据库连接
 async function getConn() {
   return mysql.createConnection(dbConfig);
+}
+
+// ---- 缓存工具（基于 MySQL JSON 表）----
+async function ensureMbtiCacheTable(connection) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS user_mbti_cache (
+      user_id INT NOT NULL,
+      cache_type ENUM('analysis','suggestions') NOT NULL,
+      data JSON NOT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY(user_id, cache_type)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+}
+
+async function getMbtiCache(userId, type) {
+  const connection = await getConn();
+  await ensureMbtiCacheTable(connection);
+  const [rows] = await connection.execute(
+    'SELECT data FROM user_mbti_cache WHERE user_id = ? AND cache_type = ? LIMIT 1',
+    [userId, type]
+  );
+  await connection.end();
+  if (rows.length > 0) {
+    try {
+      return JSON.parse(rows[0].data);
+    } catch (e) {
+      return rows[0].data; // 若已是对象
+    }
+  }
+  return null;
+}
+
+async function setMbtiCache(userId, type, dataObj) {
+  const connection = await getConn();
+  await ensureMbtiCacheTable(connection);
+  await connection.execute(
+    'INSERT INTO user_mbti_cache (user_id, cache_type, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = CURRENT_TIMESTAMP',
+    [userId, type, JSON.stringify(dataObj)]
+  );
+  await connection.end();
+}
+
+async function ensureDashboardLogsTable(connection) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS user_dashboard_logs (
+      user_id INT NOT NULL,
+      log_id INT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, log_id),
+      INDEX idx_log_id (log_id),
+      CONSTRAINT fk_dashboard_log_log FOREIGN KEY (log_id) REFERENCES logs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 }
 
 // 检查用户是否有指定权限的辅助函数
@@ -1171,6 +1228,432 @@ app.get('/api/user/permissions', auth, async (req, res) => {
   } catch (e) {
     console.error('获取用户权限失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
+  }
+});
+
+/**
+ * @swagger
+ * /api/user/mbti-analysis:
+ *   get:
+ *     summary: 根据用户日志关键词生成MBTI性格分析
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startTime
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 开始时间（可选，不传则分析所有日志）
+ *       - in: query
+ *         name: endTime
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 结束时间（可选，不传则分析所有日志）
+ *     responses:
+ *       200:
+ *         description: 分析成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     mbti:
+ *                       type: string
+ *                       example: INTJ
+ *                     analysis:
+ *                       type: string
+ *                     traits:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                     confidence:
+ *                       type: string
+ *                     keywords:
+ *                       type: string
+ *       400:
+ *         description: 参数错误或关键词不足
+ */
+// 根据用户日志关键词生成MBTI分析
+app.get('/api/user/mbti-analysis', auth, async (req, res) => {
+  try {
+    const { startTime, endTime, force } = req.query;
+
+    // 先读缓存（除非显式 force 刷新）
+    if (!force) {
+      const cached = await getMbtiCache(req.user.id, 'analysis');
+      if (cached) {
+        return res.json({ success: true, data: cached, message: 'MBTI分析读取缓存' });
+      }
+    }
+    const connection = await getConn();
+
+    // 获取用户的关键词
+    let sql = `
+      SELECT lk.keyword, lk.score
+      FROM log_keywords lk
+      INNER JOIN logs l ON lk.log_id = l.id
+      WHERE l.author_user_id = ?
+    `;
+    const params = [req.user.id];
+
+    if (startTime && endTime) {
+      sql += ' AND l.time_from >= ? AND l.time_from <= ?';
+      params.push(startTime, endTime);
+    }
+
+    sql += ' ORDER BY lk.score DESC';
+
+    const [rows] = await connection.execute(sql, params);
+
+    let analysis;
+    if (rows.length > 0) {
+      // 已有关键词，正常走关键词分析
+      const keywords = rows.map(row => row.keyword);
+      analysis = await generateMBTIAnalysis(keywords);
+    } else {
+      // 没有关键词：回退到“日志原文分析”
+      const [logRows] = await connection.execute(
+        `SELECT COALESCE(title,'') AS title, COALESCE(content,'') AS content
+         FROM logs
+         WHERE author_user_id = ?
+         ${startTime && endTime ? 'AND time_from >= ? AND time_from <= ?' : ''}
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        startTime && endTime ? [req.user.id, startTime, endTime] : [req.user.id]
+      );
+
+      const logsText = (logRows || [])
+        .map(r => `${r.title} ${r.content}`.trim())
+        .filter(s => s && s.length > 0)
+        .join('\n');
+
+      if (!logsText || logsText.length < 10) {
+        await connection.end();
+        return res.status(400).json({
+          success: false,
+          message: '没有足够的日志数据用于分析，请先记录一些日志'
+        });
+      }
+
+      const { generateMBTIFromLogsText } = require('./llm_service');
+      analysis = await generateMBTIFromLogsText(logsText);
+    }
+
+    await connection.end();
+
+    res.json({
+      success: true,
+      data: analysis,
+      message: 'MBTI分析生成成功'
+    });
+
+    // 写入缓存（异步，不阻塞响应）
+    setMbtiCache(req.user.id, 'analysis', analysis).catch(() => {});
+  } catch (e) {
+    console.error('生成MBTI分析失败:', e);
+    res.status(500).json({
+      success: false,
+      message: '生成MBTI分析失败: ' + e.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/user/development-suggestions:
+ *   get:
+ *     summary: 根据MBTI类型生成发展建议
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: mbti
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MBTI类型（如：INTJ）
+ *       - in: query
+ *         name: startTime
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 开始时间（可选）
+ *       - in: query
+ *         name: endTime
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 结束时间（可选）
+ *     responses:
+ *       200:
+ *         description: 生成成功
+ *       400:
+ *         description: 参数错误
+ */
+// 根据MBTI类型生成发展建议
+app.get('/api/user/development-suggestions', auth, async (req, res) => {
+  try {
+    const { mbti, startTime, endTime, force } = req.query;
+
+    if (!mbti) {
+      return res.status(400).json({
+        success: false,
+        message: 'MBTI类型不能为空'
+      });
+    }
+
+    // 缓存命中（除非 force）
+    if (!force) {
+      const cached = await getMbtiCache(req.user.id, 'suggestions');
+      if (cached && (cached.mbti ? cached.mbti.toUpperCase() === mbti.toUpperCase() : true)) {
+        return res.json({ success: true, data: cached, message: '发展建议读取缓存' });
+      }
+    }
+
+    const connection = await getConn();
+
+    // 获取用户的关键词（用于个性化建议）
+    let sql = `
+      SELECT lk.keyword, lk.score
+      FROM log_keywords lk
+      INNER JOIN logs l ON lk.log_id = l.id
+      WHERE l.author_user_id = ?
+    `;
+    const params = [req.user.id];
+
+    if (startTime && endTime) {
+      sql += ' AND l.time_from >= ? AND l.time_from <= ?';
+      params.push(startTime, endTime);
+    }
+
+    sql += ' ORDER BY lk.score DESC';
+
+    const [rows] = await connection.execute(sql, params);
+    await connection.end();
+
+    // 提取关键词
+    const keywords = rows.map(row => row.keyword);
+
+    // 调用大模型生成发展建议
+    const suggestions = await generateDevelopmentSuggestions(mbti, keywords);
+
+    res.json({
+      success: true,
+      data: suggestions,
+      message: '发展建议生成成功'
+    });
+
+    // 写入缓存（异步）
+    setMbtiCache(req.user.id, 'suggestions', { ...suggestions, mbti }).catch(() => {});
+  } catch (e) {
+    console.error('生成发展建议失败:', e);
+    res.status(500).json({
+      success: false,
+      message: '生成发展建议失败: ' + e.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/dashboard/logs:
+ *   get:
+ *     summary: 获取仪表盘日志列表
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 8
+ *         description: 返回的最大日志条数
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ */
+app.get('/api/dashboard/logs', auth, async (req, res) => {
+  try {
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 12) : DASHBOARD_LOG_LIMIT;
+
+    const connection = await getConn();
+    await ensureDashboardLogsTable(connection);
+
+    const [pinnedRows] = await connection.execute(
+      `
+        SELECT l.id, l.title, l.content, l.log_status, l.time_from, l.time_to, l.priority,
+               l.created_at, l.updated_at, udl.created_at AS pinned_at, 1 AS is_pinned
+        FROM user_dashboard_logs udl
+        JOIN logs l ON udl.log_id = l.id
+        WHERE udl.user_id = ? AND l.author_user_id = ?
+        ORDER BY udl.created_at ASC
+        LIMIT ${limit}
+      `,
+      [req.user.id, req.user.id]
+    );
+
+    const pinnedIds = pinnedRows.map(row => row.id);
+    let additionalRows = [];
+    const remaining = limit - pinnedRows.length;
+
+    if (remaining > 0) {
+      let sql = `
+        SELECT l.id, l.title, l.content, l.log_status, l.time_from, l.time_to, l.priority,
+               l.created_at, l.updated_at, NULL AS pinned_at, 0 AS is_pinned
+        FROM logs l
+        WHERE l.author_user_id = ?
+      `;
+      const params = [req.user.id];
+
+      if (pinnedIds.length > 0) {
+        sql += ` AND l.id NOT IN (${pinnedIds.map(() => '?').join(',')})`;
+        params.push(...pinnedIds);
+      }
+
+      sql += `
+        ORDER BY
+          CASE WHEN l.time_to IS NULL THEN 1 ELSE 0 END,
+          l.time_to ASC,
+          l.created_at DESC
+        LIMIT ${remaining}
+      `;
+
+      const [autoRows] = await connection.execute(sql, params);
+      additionalRows = autoRows;
+    }
+
+    await connection.end();
+
+    const rows = [...pinnedRows, ...additionalRows];
+    const data = rows.map(row => ({
+      id: row.id,
+      title: row.title || '',
+      content: row.content || '',
+      logStatus: row.log_status || 'pending',
+      startTime: row.time_from,
+      endTime: row.time_to,
+      priority: row.priority,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      isPinned: row.is_pinned === 1,
+      pinnedAt: row.pinned_at
+    }));
+
+    res.json({
+      success: true,
+      message: '获取仪表盘日志成功',
+      data
+    });
+  } catch (e) {
+    console.error('获取仪表盘日志失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/dashboard/logs:
+ *   post:
+ *     summary: 固定仪表盘日志
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.post('/api/dashboard/logs', auth, async (req, res) => {
+  try {
+    const { logId } = req.body;
+    const logIdNum = parseInt(logId, 10);
+    if (!Number.isFinite(logIdNum)) {
+      return res.status(400).json({ success: false, message: 'logId 参数无效' });
+    }
+
+    const connection = await getConn();
+    await ensureDashboardLogsTable(connection);
+
+    const [[logRow]] = await connection.execute(
+      'SELECT id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1',
+      [logIdNum, req.user.id]
+    );
+    if (!logRow) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '日志不存在或不属于当前用户' });
+    }
+
+    const [[countRow]] = await connection.execute(
+      'SELECT COUNT(*) AS cnt FROM user_dashboard_logs WHERE user_id = ?',
+      [req.user.id]
+    );
+    if (countRow.cnt >= DASHBOARD_LOG_LIMIT) {
+      await connection.end();
+      return res.status(400).json({ success: false, message: `最多只能固定 ${DASHBOARD_LOG_LIMIT} 条日志` });
+    }
+
+    const [[existsRow]] = await connection.execute(
+      'SELECT 1 FROM user_dashboard_logs WHERE user_id = ? AND log_id = ? LIMIT 1',
+      [req.user.id, logIdNum]
+    );
+    if (existsRow) {
+      await connection.end();
+      return res.status(409).json({ success: false, message: '该日志已在展示列表中' });
+    }
+
+    await connection.execute(
+      'INSERT INTO user_dashboard_logs (user_id, log_id) VALUES (?, ?)',
+      [req.user.id, logIdNum]
+    );
+    await connection.end();
+
+    res.json({ success: true, message: '添加成功' });
+  } catch (e) {
+    console.error('固定仪表盘日志失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/dashboard/logs/{logId}:
+ *   delete:
+ *     summary: 移除固定的仪表盘日志
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.delete('/api/dashboard/logs/:logId', auth, async (req, res) => {
+  try {
+    const logIdNum = parseInt(req.params.logId, 10);
+    if (!Number.isFinite(logIdNum)) {
+      return res.status(400).json({ success: false, message: 'logId 参数无效' });
+    }
+
+    const connection = await getConn();
+    await ensureDashboardLogsTable(connection);
+
+    const [result] = await connection.execute(
+      'DELETE FROM user_dashboard_logs WHERE user_id = ? AND log_id = ?',
+      [req.user.id, logIdNum]
+    );
+    await connection.end();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: '未找到对应的固定日志' });
+    }
+
+    res.json({ success: true, message: '移除成功' });
+  } catch (e) {
+    console.error('移除仪表盘日志失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
   }
 });
 
@@ -2260,35 +2743,35 @@ app.post('/api/logs', auth, async (req, res) => {
     // ！！！！！！！！！！！！！！！！！！！！！！暂时关闭关键词提取功能！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！
      
     //异步提取关键词并写入关键词表（不阻塞响应）
-    // const logId = lRes.insertId;
+    const logId = lRes.insertId;
 
-    // (async () => {
-    //   let kwConnection;
-    //   try {
-    //     const fullText = `${title || ''} ${content || ''}`.trim();
-    //     if (fullText) {
-    //       const keywords = await extractKeywords(fullText, 5);
-    //       if (keywords.length > 0) {
-    //         // 创建新的数据库连接用于异步操作
-    //         kwConnection = await getConn();
-    //         const values = keywords.map(k => [logId, k.word, k.score]);
-    //         await kwConnection.execute(
-    //           'INSERT INTO log_keywords (log_id, keyword, score) VALUES ' +
-    //           values.map(() => '(?,?,?)').join(','),
-    //           values.flat()
-    //         );
-    //         console.log(`✅ 日志 ${logId} 关键词提取成功:`, keywords.map(k => k.word).join(', '));
-    //       }
-    //     }
-    //   } catch (err) {
-    //     console.error(`❌ 日志 ${logId} 关键词提取失败:`, err.message);
-    //   } finally {
-    //     // 确保关闭连接
-    //     if (kwConnection) {
-    //       await kwConnection.end();
-    //     }
-    //   }
-    // })();
+    (async () => {
+      let kwConnection;
+      try {
+        const fullText = `${title || ''} ${content || ''}`.trim();
+        if (fullText) {
+          const keywords = await extractKeywords(fullText, 5);
+          if (keywords.length > 0) {
+            // 创建新的数据库连接用于异步操作
+            kwConnection = await getConn();
+            const values = keywords.map(k => [logId, k.word, k.score]);
+            await kwConnection.execute(
+              'INSERT INTO log_keywords (log_id, keyword, score) VALUES ' +
+              values.map(() => '(?,?,?)').join(','),
+              values.flat()
+            );
+            console.log(`✅ 日志 ${logId} 关键词提取成功:`, keywords.map(k => k.word).join(', '));
+          }
+        }
+      } catch (err) {
+        console.error(`❌ 日志 ${logId} 关键词提取失败:`, err.message);
+      } finally {
+        // 确保关闭连接
+        if (kwConnection) {
+          await kwConnection.end();
+        }
+      }
+    })();
 
     if (syncTaskProgress && finalTaskId) {
       await connection.execute('UPDATE tasks SET progress = ?, priority = ? WHERE id = ?', [Math.min(Math.max(progress, 0), 100), priority, finalTaskId]);
@@ -2464,7 +2947,43 @@ app.get('/api/logs/:id', auth, async (req, res) => {
   }
 });
 
-// 获取单个日志的关键词
+/**
+ * @swagger
+ * /api/logs/{id}/keywords:
+ *   get:
+ *     summary: 获取单个日志的关键词
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       keyword:
+ *                         type: string
+ *                       score:
+ *                         type: number
+ *       404:
+ *         description: 日志不存在
+ */
 app.get('/api/logs/:id/keywords', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -2495,7 +3014,53 @@ app.get('/api/logs/:id/keywords', auth, async (req, res) => {
   }
 });
 
-// 批量获取时间范围内日志的关键词
+/**
+ * @swagger
+ * /api/logs/keywords:
+ *   get:
+ *     summary: 批量获取时间范围内日志的关键词
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 开始时间
+ *       - in: query
+ *         name: endTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: 结束时间
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   additionalProperties:
+ *                     type: array
+ *                     items:
+ *                       type: object
+ *                       properties:
+ *                         keyword:
+ *                           type: string
+ *                         weight:
+ *                           type: number
+ *       400:
+ *         description: 缺少时间参数
+ */
 app.get('/api/logs/keywords', auth, async (req, res) => {
   try {
     const { startTime, endTime } = req.query;

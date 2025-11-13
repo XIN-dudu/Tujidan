@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/user_service.dart';
+import '../services/mbti_service.dart';
 import '../auth_service.dart';
 import '../login_page.dart';
 
@@ -17,15 +18,23 @@ class _UserProfilePageState extends State<UserProfilePage> {
   final UserService _userService = UserService();
   final ImagePicker _imagePicker = ImagePicker();
   Map<String, dynamic>? _userInfo;
+  // ignore: unused_field
   List<dynamic> _roles = [];
+  // ignore: unused_field
   List<dynamic> _permissions = [];
   bool _isLoading = true;
   bool _isUploading = false;
+  
+  // MBTI相关状态
+  Map<String, dynamic>? _mbtiAnalysis;
+  bool _isLoadingMBTI = false;
+  bool _isLoadingSuggestions = false;
 
   @override
   void initState() {
     super.initState();
     _loadUserData();
+    _loadMBTIAnalysis();
   }
 
   Future<void> _loadUserData() async {
@@ -39,8 +48,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
         _userService.getUserPermissions(),
       ]);
 
-      final userInfo = results[0] as Map<String, dynamic>?;
-      final permissionsData = results[1] as Map<String, dynamic>?;
+      final userInfo = results[0];
+      final permissionsData = results[1];
 
       if (mounted) {
         setState(() {
@@ -58,6 +67,181 @@ class _UserProfilePageState extends State<UserProfilePage> {
         );
       }
     }
+  }
+
+  Future<void> _loadMBTIAnalysis({bool force = false}) async {
+    if (!mounted) return;
+    setState(() => _isLoadingMBTI = true);
+    
+    try {
+      final analysis = await MBTIService.getMBTIAnalysis(force: force);
+      if (mounted) {
+        setState(() {
+          _mbtiAnalysis = analysis;
+          _isLoadingMBTI = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingMBTI = false);
+        // 静默失败，不显示错误提示（因为可能没有关键词数据）
+      }
+    }
+  }
+
+  Future<void> _showDevelopmentSuggestions() async {
+    if (_mbtiAnalysis == null || _mbtiAnalysis!['mbti'] == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先获取MBTI分析')),
+      );
+      return;
+    }
+
+    final mbti = _mbtiAnalysis!['mbti'] as String;
+    
+    if (!mounted) return;
+    setState(() => _isLoadingSuggestions = true);
+
+    try {
+      final suggestions = await MBTIService.getDevelopmentSuggestions(mbti: mbti);
+      
+      if (!mounted) return;
+      setState(() => _isLoadingSuggestions = false);
+
+      if (suggestions == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('获取发展建议失败')),
+        );
+        return;
+      }
+
+      // 显示发展建议对话框
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => _buildSuggestionsDialog(suggestions),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingSuggestions = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('获取发展建议失败: $e')),
+        );
+      }
+    }
+  }
+
+  Widget _buildSuggestionsDialog(Map<String, dynamic> suggestions) {
+    final suggestionsList = suggestions['suggestions'] as List<dynamic>? ?? [];
+    final summary = suggestions['summary'] as String? ?? '';
+
+    return Dialog(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 600),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'AI发展建议',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (summary.isNotEmpty) ...[
+                      Text(
+                        summary,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+                    if (suggestionsList.isNotEmpty) ...[
+                      const Text(
+                        '具体建议：',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...suggestionsList.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final suggestion = entry.value as String;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  suggestion,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('关闭'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _logout() async {
@@ -123,6 +307,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildUserInfoCard(),
+                    const SizedBox(height: 24),
+                    _buildMBTICard(),
                     const SizedBox(height: 24),
                     _buildLogoutButton(),
                   ],
@@ -311,6 +497,164 @@ class _UserProfilePageState extends State<UserProfilePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildMBTICard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.psychology, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text(
+                      '性格分析',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                if (_isLoadingMBTI)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () => _loadMBTIAnalysis(force: true),
+                    tooltip: '刷新分析',
+                    iconSize: 20,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            if (_isLoadingMBTI)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else if (_mbtiAnalysis == null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.info_outline, size: 48, color: Colors.grey),
+                      const SizedBox(height: 12),
+                      const Text(
+                        '暂无分析数据',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () => _loadMBTIAnalysis(force: true),
+                        child: const Text('重新加载'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else ...[
+              // MBTI类型
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.blue, width: 2),
+                    ),
+                    child: Text(
+                      _mbtiAnalysis!['mbti'] ?? '未知',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '可信度: ${_mbtiAnalysis!['confidence'] ?? '中'}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // 性格特征
+              if (_mbtiAnalysis!['traits'] != null)
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: (_mbtiAnalysis!['traits'] as List<dynamic>)
+                      .map((trait) => Chip(
+                            label: Text(trait.toString()),
+                            backgroundColor: Colors.blue[50],
+                            side: BorderSide(color: Colors.blue[200]!),
+                          ))
+                      .toList(),
+                ),
+              const SizedBox(height: 16),
+              // 分析说明
+              if (_mbtiAnalysis!['analysis'] != null)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _mbtiAnalysis!['analysis'] as String,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              // 查看发展建议按钮
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isLoadingSuggestions ? null : _showDevelopmentSuggestions,
+                  icon: _isLoadingSuggestions
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.lightbulb_outline),
+                  label: Text(_isLoadingSuggestions ? '生成中...' : '查看发展建议'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange[50],
+                    foregroundColor: Colors.orange[700],
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
