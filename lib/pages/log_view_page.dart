@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../models/log_entry.dart';
 import '../models/task.dart';
@@ -216,49 +217,48 @@ class _LogViewPageState extends State<LogViewPage> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
-        title: GestureDetector(
-          onTap: _pickDate,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.calendar_today, size: 18, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  _getViewTitle(),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary,
+        title: const Text('视图', style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+                GestureDetector(
+                  onTap: _pickDate,
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.calendar_today, size: 18, color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Text(
+                          _getViewTitle(),
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(Icons.keyboard_arrow_down, size: 18, color: Theme.of(context).colorScheme.primary),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(width: 4),
-                Icon(Icons.keyboard_arrow_down, size: 18, color: Theme.of(context).colorScheme.primary),
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded),
+                  onPressed: _loadLogs,
+                  tooltip: '刷新',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.grey[100],
+                  ),
+                ),
+                const SizedBox(width: 8),
               ],
             ),
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _loadLogs,
-            tooltip: '刷新',
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.grey[100],
-            ),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: _isLoading
+          body: _isLoading
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -278,9 +278,15 @@ class _LogViewPageState extends State<LogViewPage> {
                 ],
               ),
             )
-          : SingleChildScrollView(
-              child: Column(
-                children: [
+          : RefreshIndicator(
+              onRefresh: () async {
+                await _loadLogs();
+              },
+              displacement: MediaQuery.of(context).padding.top + kToolbarHeight,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  children: [
                   // 视图切换和日期导航
                   Container(
                     color: Colors.white,
@@ -351,6 +357,7 @@ class _LogViewPageState extends State<LogViewPage> {
                 ],
               ),
             ),
+          ),
     );
   }
 
@@ -1347,14 +1354,6 @@ class _LogViewPageState extends State<LogViewPage> {
           topLeft: Radius.circular(24),
           topRight: Radius.circular(24),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            spreadRadius: 2,
-            blurRadius: 10,
-            offset: const Offset(0, -3),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

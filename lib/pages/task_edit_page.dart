@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:ui';
+import '../theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import '../models/task.dart';
 import '../models/api_response.dart';
@@ -139,7 +141,9 @@ class _TaskEditPageState extends State<TaskEditPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.task == null ? '新建任务' : '编辑任务')),
+      appBar: AppBar(
+        title: Text(widget.task == null ? '新建任务' : '编辑任务', style: const TextStyle(fontWeight: FontWeight.bold)),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),

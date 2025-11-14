@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
@@ -11,6 +13,7 @@ import 'package:test_flutter/services/dashboard_service.dart';
 import 'package:test_flutter/models/dashboard_log_item.dart';
 import 'package:test_flutter/services/log_service.dart';
 import 'package:test_flutter/models/log_entry.dart';
+import 'package:test_flutter/theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,11 +28,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '潘多拉',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.indigo,
-        scaffoldBackgroundColor: const Color(0xFFF6F6FA),
-      ),
+      theme: AppTheme.getTheme(),
       home: const _RootDecider(),
     );
   }
@@ -288,9 +287,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('潘多拉'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        title: const Text('潘多拉', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -367,7 +364,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
                   const Expanded(
                     child: Text(
                       '个人日志',
-                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
                     ),
                   ),
                   IconButton(
@@ -534,7 +531,7 @@ class _DashboardTile extends StatelessWidget {
               const Spacer(),
               Text(
                 title,
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
               ),
             ],
           ),

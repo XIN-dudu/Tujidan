@@ -1,6 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../theme/app_theme.dart';
 
 /// 日志活跃度趋势图（柱状图）
 class LogActivityChart extends StatelessWidget {
@@ -22,11 +23,13 @@ class LogActivityChart extends StatelessWidget {
     final barGroups = _prepareBarGroups();
 
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: AppTheme.cardElevation,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+      ),
       color: Colors.white,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppTheme.spacingL),
         child: SizedBox(
           height: 200,
           child: BarChart(
@@ -108,9 +111,17 @@ class LogActivityChart extends StatelessWidget {
         barRods: [
           BarChartRodData(
             toY: data.value.toDouble(),
-            color: Colors.lightBlue,
-            width: 12,
-            borderRadius: BorderRadius.circular(4),
+            color: Colors.indigo,
+            width: 16,
+            borderRadius: BorderRadius.circular(AppTheme.radiusS),
+            gradient: LinearGradient(
+              colors: [
+                Colors.indigo[400]!,
+                Colors.indigo[600]!,
+              ],
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+            ),
           ),
         ],
       );

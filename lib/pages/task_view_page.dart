@@ -1,4 +1,6 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../widgets/page_transitions.dart';
 import '../models/task.dart';
 import '../models/api_response.dart';
 import '../services/task_service.dart';
@@ -87,11 +89,13 @@ class _TaskViewPageState extends State<TaskViewPage> {
 
   Future<void> _edit() async {
     final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => TaskEditPage(
-        task: _task,
-        canEditAll: _canEdit, // 传递是否可以编辑所有字段
-        canEditProgressOnly: _canEditProgress, // 传递是否只能编辑进度
-      )),
+      SlidePageRoute(
+        page: TaskEditPage(
+          task: _task,
+          canEditAll: _canEdit, // 传递是否可以编辑所有字段
+          canEditProgressOnly: _canEditProgress, // 传递是否只能编辑进度
+        ),
+      ),
     );
     if (changed == true) {
       if (mounted) {
@@ -300,7 +304,7 @@ class _TaskViewPageState extends State<TaskViewPage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('任务详情'),
+          title: const Text('任务详情', style: TextStyle(fontWeight: FontWeight.bold)),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () async {
@@ -322,87 +326,87 @@ class _TaskViewPageState extends State<TaskViewPage> {
               ),
           ],
         ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(_task.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text('优先级：${_task.priority.displayName}'),
-              const SizedBox(height: 8),
-              Text('状态：${_task.status.displayName}'),
-              const SizedBox(height: 8),
-              Text('负责人：${_task.assignee.isEmpty ? '未指定' : _task.assignee}'),
-              const SizedBox(height: 8),
-              Text('计划截至：${_task.deadline.year}-${_task.deadline.month.toString().padLeft(2, '0')}-${_task.deadline.day.toString().padLeft(2, '0')}'),
-              if (_task.description.isNotEmpty) ...[
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_task.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text('优先级：${_task.priority.displayName}'),
+                const SizedBox(height: 8),
+                Text('状态：${_task.status.displayName}'),
+                const SizedBox(height: 8),
+                Text('负责人：${_task.assignee.isEmpty ? '未指定' : _task.assignee}'),
+                const SizedBox(height: 8),
+                Text('计划截至：${_task.deadline.year}-${_task.deadline.month.toString().padLeft(2, '0')}-${_task.deadline.day.toString().padLeft(2, '0')}'),
+                if (_task.description.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text('任务描述：', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(_task.description),
+                ],
+                const SizedBox(height: 24),
+                // 编辑按钮（创建者/管理员/领导可见，或被分配方可见）
+                if (_canEdit || _canEditProgress)
+                  ElevatedButton.icon(
+                    onPressed: _working ? null : _edit,
+                    icon: const Icon(Icons.edit),
+                    label: Text(_canEdit ? '编辑任务' : '更新进度'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                    ),
+                  ),
+                if (_canEdit || _canEditProgress) const SizedBox(height: 12),
+                // 根据权限和状态显示不同按钮
+                if (_canCancelAccept)
+                  // 已接收任务，显示取消接收按钮（只有有权限的用户可见）
+                  ElevatedButton.icon(
+                    onPressed: _working ? null : _cancelAccept,
+                    icon: const Icon(Icons.cancel),
+                    label: const Text('取消接收'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                    ),
+                  )
+                else if (_canPublish || _canAccept)
+                  // 未接收任务，显示接收和分配/撤回分配按钮
+                  Row(
+                    children: [
+                      if (_canPublish) ...[
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _working ? null : _publish,
+                            icon: Icon(isPublished ? Icons.undo : Icons.campaign),
+                            label: Text(isPublished ? '撤回分配' : '分配任务'),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 48),
+                            ),
+                          ),
+                        ),
+                        if (_canAccept) const SizedBox(width: 12),
+                      ],
+                      // 接收任务按钮（只有被分配人且有权限的用户可见）
+                      if (_canAccept) ...[
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _working ? null : _accept,
+                            icon: const Icon(Icons.how_to_reg),
+                            label: const Text('接收任务'),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 48),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 const SizedBox(height: 16),
-                const Text('任务描述：', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text(_task.description),
               ],
-              const SizedBox(height: 24),
-              // 编辑按钮（创建者/管理员/领导可见，或被分配方可见）
-              if (_canEdit || _canEditProgress)
-                ElevatedButton.icon(
-                  onPressed: _working ? null : _edit,
-                  icon: const Icon(Icons.edit),
-                  label: Text(_canEdit ? '编辑任务' : '更新进度'),
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 48),
-                  ),
-                ),
-              if (_canEdit || _canEditProgress) const SizedBox(height: 12),
-              // 根据权限和状态显示不同按钮
-              if (_canCancelAccept)
-                // 已接收任务，显示取消接收按钮（只有有权限的用户可见）
-                ElevatedButton.icon(
-                  onPressed: _working ? null : _cancelAccept,
-                  icon: const Icon(Icons.cancel),
-                  label: const Text('取消接收'),
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 48),
-                  ),
-                )
-              else if (_canPublish || _canAccept)
-                // 未接收任务，显示接收和分配/撤回分配按钮
-                Row(
-                  children: [
-                    if (_canPublish) ...[
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _working ? null : _publish,
-                          icon: Icon(isPublished ? Icons.undo : Icons.campaign),
-                          label: Text(isPublished ? '撤回分配' : '分配任务'),
-                          style: ElevatedButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 48),
-                          ),
-                        ),
-                      ),
-                      if (_canAccept) const SizedBox(width: 12),
-                    ],
-                    // 接收任务按钮（只有被分配人且有权限的用户可见）
-                    if (_canAccept) ...[
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: _working ? null : _accept,
-                          icon: const Icon(Icons.how_to_reg),
-                          label: const Text('接收任务'),
-                          style: ElevatedButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 48),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              const SizedBox(height: 16),
-            ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }

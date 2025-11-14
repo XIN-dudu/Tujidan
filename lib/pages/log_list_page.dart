@@ -1,8 +1,13 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../models/log_entry.dart';
 import '../models/task.dart' show TaskPriority;
 import '../services/log_service.dart';
 import 'log_edit_page.dart';
+import '../theme/app_theme.dart';
+import '../widgets/skeleton_loader.dart';
+import '../widgets/page_transitions.dart';
+import '../widgets/animated_list_item.dart';
 
 class LogListPage extends StatefulWidget {
   const LogListPage({super.key});
@@ -18,6 +23,9 @@ class _LogListPageState extends State<LogListPage> {
   String? _selectedType;
   DateTime? _startTime;
   DateTime? _endTime;
+  final ScrollController _scrollController = ScrollController();
+  bool _showSearchBar = true;
+  double _lastScrollOffset = 0;
 
   final List<String> _types = ['work', 'study', 'life', 'other'];
 
@@ -25,6 +33,30 @@ class _LogListPageState extends State<LogListPage> {
   void initState() {
     super.initState();
     _loadLogs();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    final currentOffset = _scrollController.offset;
+    if (currentOffset > _lastScrollOffset && currentOffset > 50) {
+      // 向下滚动且超过50px，隐藏搜索栏
+      if (_showSearchBar) {
+        setState(() => _showSearchBar = false);
+      }
+    } else if (currentOffset < _lastScrollOffset || currentOffset <= 50) {
+      // 向上滚动或回到顶部，显示搜索栏
+      if (!_showSearchBar) {
+        setState(() => _showSearchBar = true);
+      }
+    }
+    _lastScrollOffset = currentOffset;
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadLogs({
@@ -68,8 +100,8 @@ class _LogListPageState extends State<LogListPage> {
 
   Future<void> _navigateToEditLog(LogEntry? logEntry) async {
     final result = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(
-        builder: (context) => LogEditPage(logEntry: logEntry),
+      SlidePageRoute(
+        page: LogEditPage(logEntry: logEntry),
       ),
     );
     if (result == true) {
@@ -181,7 +213,7 @@ class _LogListPageState extends State<LogListPage> {
     return Scaffold(
       backgroundColor: Colors.purple[50],
       appBar: AppBar(
-        title: const Text('日志管理'),
+        title: const Text('日志', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -197,110 +229,156 @@ class _LogListPageState extends State<LogListPage> {
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        decoration: InputDecoration(
-                          hintText: '搜索日志内容...',
-                          prefixIcon: const Icon(Icons.search),
-                          filled: true,
-                          fillColor: Colors.white,
-                          contentPadding:
-                          const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(color: Colors.grey.shade300),
+          AnimatedSize(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                child: ClipRect(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    heightFactor: _showSearchBar ? 1.0 : 0.0,
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0.0, end: _showSearchBar ? 1.0 : 0.0),
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      builder: (context, value, child) {
+                        return Transform.translate(
+                          offset: Offset(0, -20 * (1 - value)),
+                          child: Opacity(
+                            opacity: value,
+                            child: child,
                           ),
-                        ),
-                        onChanged: (value) {
-                          setState(() => _searchQuery = value);
-                          _loadLogs(
-                            keyword: _searchQuery,
-                            type: _selectedType,
-                            startTime: _startTime,
-                            endTime: _endTime,
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    DropdownButton<String>(
-                      value: _selectedType ?? '',
-                      hint: const Text('类型'),
-                      items: [
-                        const DropdownMenuItem<String>(
-                          value: '',
-                          child: Text('全部'),
-                        ),
-                        ..._types.map((type) => DropdownMenuItem<String>(
-                              value: type,
-                              child: Text(type),
-                            )),
-                      ],
-                      onChanged: (value) {
-                        setState(() => _selectedType = (value == '' ? null : value));
-                        _loadLogs(
-                          keyword: _searchQuery,
-                          type: _selectedType,
-                          startTime: _startTime,
-                          endTime: _endTime,
                         );
                       },
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    decoration: InputDecoration(
+                                      hintText: '搜索日志内容...',
+                                      prefixIcon: const Icon(Icons.search),
+                                      suffixIcon: _searchQuery.isNotEmpty
+                                          ? IconButton(
+                                              icon: const Icon(Icons.clear),
+                                              onPressed: () {
+                                                setState(() => _searchQuery = '');
+                                                _loadLogs(
+                                                  keyword: '',
+                                                  type: _selectedType,
+                                                  startTime: _startTime,
+                                                  endTime: _endTime,
+                                                );
+                                              },
+                                            )
+                                          : null,
+                                    ),
+                                    onChanged: (value) {
+                                      setState(() => _searchQuery = value);
+                                      _loadLogs(
+                                        keyword: _searchQuery,
+                                        type: _selectedType,
+                                        startTime: _startTime,
+                                        endTime: _endTime,
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                DropdownButton<String>(
+                                  value: _selectedType ?? '',
+                                  hint: const Text('类型'),
+                                  items: [
+                                    const DropdownMenuItem<String>(
+                                      value: '',
+                                      child: Text('全部'),
+                                    ),
+                                    ..._types.map((type) => DropdownMenuItem<String>(
+                                          value: type,
+                                          child: Text(type),
+                                        )),
+                                  ],
+                                  onChanged: (value) {
+                                    setState(() => _selectedType = (value == '' ? null : value));
+                                    _loadLogs(
+                                      keyword: _searchQuery,
+                                      type: _selectedType,
+                                      startTime: _startTime,
+                                      endTime: _endTime,
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                TextButton.icon(
+                                  onPressed: _pickStartTime,
+                                  icon: const Icon(Icons.date_range),
+                                  label: Text(_startTime == null
+                                      ? '开始时间'
+                                      : _formatDateTime(_startTime!)),
+                                ),
+                                const SizedBox(width: 12),
+                                TextButton.icon(
+                                  onPressed: _pickEndTime,
+                                  icon: const Icon(Icons.date_range),
+                                  label: Text(_endTime == null ? '结束时间' : _formatDateTime(_endTime!)),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ],
+                  ),
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    TextButton.icon(
-                      onPressed: _pickStartTime,
-                      icon: const Icon(Icons.date_range),
-                      label: Text(_startTime == null
-                          ? '开始时间'
-                          : _formatDateTime(_startTime!)),
-                    ),
-                    const SizedBox(width: 12),
-                    TextButton.icon(
-                      onPressed: _pickEndTime,
-                      icon: const Icon(Icons.date_range),
-                      label: Text(_endTime == null ? '结束时间' : _formatDateTime(_endTime!)),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _logs.isEmpty
-                ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.article_outlined, size: 64, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text('暂无日志',
-                      style: TextStyle(fontSize: 16, color: Colors.grey)),
-                  SizedBox(height: 8),
-                  Text('点击右下角按钮创建第一条日志',
-                      style: TextStyle(fontSize: 14, color: Colors.grey)),
-                ],
               ),
-            )
+              Expanded(
+                child: _isLoading
+                    ? ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: AppTheme.spacingL),
+                        itemCount: 5,
+                        itemBuilder: (context, index) => const ListItemSkeleton(),
+                      )
+                    : _logs.isEmpty
+                        ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.4,
+                        child: const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.article_outlined, size: 64, color: Colors.grey),
+                              SizedBox(height: 16),
+                              Text('暂无日志',
+                                  style: TextStyle(fontSize: 16, color: Colors.grey)),
+                              SizedBox(height: 8),
+                              Text('点击右下角按钮创建第一条日志',
+                                  style: TextStyle(fontSize: 14, color: Colors.grey)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
                 : ListView.builder(
+              controller: _scrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               itemCount: _logs.length,
               itemBuilder: (context, index) {
                 final log = _logs[index];
                 print('logStatus: ${log.logStatus}');
-                return Dismissible(
-                  key: Key(log.id),
+                return AnimatedListItem(
+                  index: index,
+                  child: Dismissible(
+                    key: Key(log.id),
                   direction: DismissDirection.endToStart,
                    background: Container(
                      margin: const EdgeInsets.only(bottom: 12.0),
@@ -464,9 +542,9 @@ class _LogListPageState extends State<LogListPage> {
                   },
                   child: Card(
                     color: Colors.white,
-                    elevation: 0,
+                    elevation: 2,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     margin: const EdgeInsets.only(bottom: 12.0),
                     child: InkWell(
@@ -474,20 +552,21 @@ class _LogListPageState extends State<LogListPage> {
                       onTap: () => _navigateToEditLog(log),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
+                            horizontal: 16, vertical: 12),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Container(
-                              width: 36,
-                              height: 36,
+                              width: 48,
+                              height: 48,
                               decoration: BoxDecoration(
                                 color: _getPriorityColor(log.priority)
                                     .withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(10),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                               child: Icon(Icons.article,
-                                  color: _getPriorityColor(log.priority)),
+                                  color: _getPriorityColor(log.priority),
+                                  size: 24),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -501,7 +580,7 @@ class _LogListPageState extends State<LogListPage> {
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                         fontSize: 16,
-                                        fontWeight: FontWeight.w500),
+                                        fontWeight: FontWeight.normal),
                                   ),
                                   const SizedBox(height: 6),
                                   Wrap(
@@ -557,20 +636,6 @@ class _LogListPageState extends State<LogListPage> {
                                             fontSize: 12,
                                             color: Colors.grey[600]),
                                       ),
-                                      Icon(Icons.flag,
-                                          size: 16,
-                                          color:
-                                          _getPriorityColor(log.priority)),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        log.priority.displayName,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: _getPriorityColor(
-                                              log.priority),
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
                                     ],
                                   ),
                                 ],
@@ -584,16 +649,20 @@ class _LogListPageState extends State<LogListPage> {
                       ),
                     ),
                   ),
+                  ),
                 );
               },
             ),
-          ),
-        ],
+              ),
+          ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _navigateToEditLog(null),
         icon: const Icon(Icons.add),
         label: const Text('写日志'),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.buttonRadius),
+        ),
       ),
     );
   }

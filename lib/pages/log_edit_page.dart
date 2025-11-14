@@ -1,4 +1,6 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 import '../models/log_entry.dart';
 import '../models/task.dart';
 import '../models/api_response.dart';
@@ -225,7 +227,7 @@ class _LogEditPageState extends State<LogEditPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.logEntry == null ? '写日志' : '编辑日志'),
+        title: Text(widget.logEntry == null ? '写日志' : '编辑日志', style: const TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           if (widget.logEntry != null)
             IconButton(

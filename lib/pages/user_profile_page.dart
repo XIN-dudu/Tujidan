@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/user_service.dart';
 import '../services/mbti_service.dart';
 import '../auth_service.dart';
 import '../login_page.dart';
+import '../widgets/page_transitions.dart';
 
 class UserProfilePage extends StatefulWidget {
   const UserProfilePage({super.key});
@@ -271,7 +273,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
       UserService.clearAvatarCache();
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginPage()),
+          FadePageRoute(page: const LoginPage()),
           (route) => false,
         );
       }
@@ -281,28 +283,58 @@ class _UserProfilePageState extends State<UserProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('我的信息'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadUserData,
-            tooltip: '刷新',
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _logout,
-            tooltip: '退出登录',
-          ),
-        ],
+      backgroundColor: Colors.purple[50],
+      extendBodyBehindAppBar: true,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Stack(
+          children: [
+            // 背景模糊层
+            ClipRRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                  ),
+                ),
+              ),
+            ),
+            // AppBar内容层
+            AppBar(
+                title: const Text('我的信息', style: TextStyle(fontWeight: FontWeight.bold)),
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                surfaceTintColor: Colors.transparent,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadUserData,
+                  tooltip: '刷新',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout),
+                  onPressed: _logout,
+                  tooltip: '退出登录',
+                ),
+              ],
+              ),
+          ],
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _loadUserData,
+              displacement: MediaQuery.of(context).padding.top + kToolbarHeight,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  MediaQuery.of(context).padding.top + kToolbarHeight + 16,
+                  16,
+                  16,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -416,6 +448,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
     }
 
     return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -485,13 +521,14 @@ class _UserProfilePageState extends State<UserProfilePage> {
             width: 80,
             child: Text(
               '$label:',
-              style: const TextStyle(fontWeight: FontWeight.w500),
+              style: const TextStyle(fontWeight: FontWeight.normal),
             ),
           ),
           Expanded(
             child: Text(
               value,
               style: TextStyle(
+                fontWeight: FontWeight.normal,
                 color: value == '未设置' ? Colors.grey : null,
               ),
             ),
@@ -503,6 +540,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
 
   Widget _buildMBTICard() {
     return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(

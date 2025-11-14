@@ -1,5 +1,6 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 /// 日志类型分布饼图组件
 class LogTypePieChart extends StatelessWidget {
@@ -19,12 +20,12 @@ class LogTypePieChart extends StatelessWidget {
     this.showCenterTotal = true,
   });
 
-  // 为不同日志类型定义固定的颜色
+  // 为不同日志类型定义固定的颜色（使用更现代的颜色）
   static const Map<String, Color> _typeColors = {
-    'work': Colors.blue,
-    'study': Colors.green,
-    'life': Colors.orange,
-    'other': Colors.grey,
+    'work': Color(0xFF5B8DEF),      // 现代蓝色
+    'study': Color(0xFF4CAF50),      // 现代绿色
+    'life': Color(0xFFFF9800),       // 现代橙色
+    'other': Color(0xFF9E9E9E),      // 现代灰色
   };
 
   @override
@@ -119,17 +120,38 @@ class LogTypePieChart extends StatelessWidget {
         final color = _typeColors[type] ?? Colors.purple;
         final translatedType = _translateType(type); // 类型中文转换
 
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 16,
-              height: 16,
-              color: color,
-            ),
-            const SizedBox(width: 8),
-            Text(translatedType),
-          ],
+        return Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppTheme.spacingM,
+            vertical: AppTheme.spacingS,
+          ),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(AppTheme.radiusS),
+            border: Border.all(color: color.withOpacity(0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: AppTheme.spacingS),
+              Text(
+                translatedType,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
         );
       }).toList(),
     );
