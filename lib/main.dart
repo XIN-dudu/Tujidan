@@ -5,6 +5,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:test_flutter/auth_service.dart';
 import 'package:test_flutter/login_page.dart';
+import 'package:test_flutter/models/notification_item.dart';
 import 'package:test_flutter/pages/log_list_page.dart';
 import 'package:test_flutter/pages/log_view_page.dart';
 import 'package:test_flutter/pages/user_profile_page.dart';
@@ -13,6 +14,7 @@ import 'package:test_flutter/services/dashboard_service.dart';
 import 'package:test_flutter/models/dashboard_log_item.dart';
 import 'package:test_flutter/services/log_service.dart';
 import 'package:test_flutter/models/log_entry.dart';
+import 'package:test_flutter/services/notification_service.dart';
 import 'package:test_flutter/theme/app_theme.dart';
 
 void main() async {
@@ -29,13 +31,13 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: '潘多拉',
       theme: AppTheme.getTheme(),
-      home: const _RootDecider(),
+      home: _RootDecider(),
     );
   }
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  HomePage({super.key});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -45,7 +47,7 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
 
   static final List<Widget> _pages = [
-    const QuadrantPage(),
+    QuadrantPage(),
     const LogViewPage(),
     const LogListPage(),
     const TaskListPage(),
@@ -78,7 +80,7 @@ class _HomePageState extends State<HomePage> {
 }
 
 class QuadrantPage extends StatefulWidget {
-  const QuadrantPage({super.key});
+  QuadrantPage({super.key});
 
   @override
   State<QuadrantPage> createState() => _QuadrantPageState();
@@ -89,11 +91,13 @@ class _QuadrantPageState extends State<QuadrantPage> {
   bool _loadingLogs = false;
   String? _logError;
   List<DashboardLogItem> _dashboardLogs = [];
+  bool _hasUnread = false;
 
   @override
   void initState() {
     super.initState();
     _loadDashboardLogs();
+    _refreshNotifications();
   }
 
   Future<void> _loadDashboardLogs({bool showLoading = true}) async {
@@ -216,6 +220,77 @@ class _QuadrantPageState extends State<QuadrantPage> {
     );
   }
 
+  void _showNotificationsPanel(BuildContext context) {
+    setState(() { _hasUnread = false; });
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return FutureBuilder<List<NotificationItem>>(
+          future: NotificationService.getNotifications(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Center(child: Text('加载通知失败: ${snapshot.error}'));
+            }
+            final notifications = List<NotificationItem>.from(snapshot.data ?? []);
+            final now = DateTime.now();
+            notifications.sort((a, b) {
+              final at = a.timestamp.isAfter(now) ? now : a.timestamp;
+              final bt = b.timestamp.isAfter(now) ? now : b.timestamp;
+              final c = bt.compareTo(at);
+              if (c != 0) return c;
+              return a.type.index.compareTo(b.type.index);
+            });
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          '通知中心',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (notifications.isEmpty)
+                      const Center(child: Text('暂无通知'))
+                    else
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: notifications.length,
+                          itemBuilder: (context, index) {
+                            final notification = notifications[index];
+                            return ListTile(
+                              title: Text(notification.title),
+                              subtitle: Text(notification.content ?? ''),
+                              trailing: Text(DateFormat('MM-dd HH:mm').format(notification.timestamp)),
+                            );
+                          },
+                          separatorBuilder: (context, index) => const Divider(height: 1),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _logout(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -289,6 +364,26 @@ class _QuadrantPageState extends State<QuadrantPage> {
       appBar: AppBar(
         title: const Text('潘多拉', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
+          Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_none),
+                onPressed: () => _showNotificationsPanel(context),
+                tooltip: '通知',
+              ),
+              if (_hasUnread)
+                Positioned(
+                  right: 10,
+                  top: 10,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                  ),
+                ),
+            ],
+          ),
+
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () => _logout(context),
@@ -462,27 +557,32 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                                 ),
                                                 child: Text(
                                                   statusLabel,
-                                                  style: const TextStyle(fontSize: 11, color: Colors.white),
+                                                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                                                 ),
                                               ),
-                                              if (item.isPinned)
-                                                IconButton(
-                                                  icon: const Icon(Icons.push_pin, size: 18, color: Colors.orange),
-                                                  tooltip: '取消固定',
-                                                  onPressed: () => _unpinLog(item.id),
-                                                ),
                                             ],
                                           ),
                                           const SizedBox(height: 6),
                                           Text(
                                             '截止：$dueText',
-                                            style: const TextStyle(fontSize: 12, color: Colors.black54),
+                                            style: const TextStyle(color: Colors.black54, fontSize: 12),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.end,
+                                            children: [
+                                              if (item.isPinned)
+                                                TextButton(
+                                                  onPressed: () => _unpinLog(item.id),
+                                                  child: const Text('取消固定'),
+                                                ),
+                                            ],
                                           ),
                                         ],
                                       ),
                                     );
                                   },
-                                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                                  separatorBuilder: (context, index) => const SizedBox(height: 8),
                                 ),
                 ),
               ),
@@ -492,6 +592,12 @@ class _QuadrantPageState extends State<QuadrantPage> {
       ),
     );
   }
+
+  Future<void> _refreshNotifications() async {
+    final list = await NotificationService.getNotifications();
+    if (!mounted) return;
+    setState(() { _hasUnread = list.isNotEmpty; });
+  }
 }
 
 class _DashboardTile extends StatelessWidget {
@@ -500,7 +606,12 @@ class _DashboardTile extends StatelessWidget {
   final Color start;
   final Color end;
 
-  const _DashboardTile({required this.icon, required this.title, required this.start, required this.end});
+  const _DashboardTile({
+    required this.icon,
+    required this.title,
+    required this.start,
+    required this.end,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -510,9 +621,13 @@ class _DashboardTile extends StatelessWidget {
       child: Ink(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(colors: [start.withOpacity(.8), end.withOpacity(.8)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          gradient: LinearGradient(
+            colors: [start, end],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
           boxShadow: [
-            BoxShadow(color: end.withOpacity(.25), blurRadius: 12, offset: const Offset(0, 6)),
+            BoxShadow(color: end.withOpacity(.2), blurRadius: 12, offset: const Offset(0, 6)),
           ],
         ),
         child: Padding(
@@ -526,7 +641,7 @@ class _DashboardTile extends StatelessWidget {
                   color: Colors.white.withOpacity(.9),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(icon, color: end, size: 28),
+                child: Icon(icon, color: start, size: 28),
               ),
               const Spacer(),
               Text(
@@ -542,47 +657,37 @@ class _DashboardTile extends StatelessWidget {
 }
 
 class _RootDecider extends StatefulWidget {
-  const _RootDecider();
+  _RootDecider();
 
   @override
   State<_RootDecider> createState() => _RootDeciderState();
 }
 
 class _RootDeciderState extends State<_RootDecider> {
-  final AuthService _authService = AuthService();
-  bool _loading = true;
-  bool _loggedIn = false;
-
-  /// 调试开关：true 表示直接跳过登录
-  final bool skipLogin = false;
-
   @override
   void initState() {
     super.initState();
-    if (!skipLogin) {
-      _check();
-    } else {
-      _loading = false;
-      _loggedIn = true;
-    }
+    _checkLoginStatus();
   }
 
-  Future<void> _check() async {
-    final bool ok = await _authService.isLoggedIn();
-    if (!mounted) return;
-    setState(() {
-      _loggedIn = ok;
-      _loading = false;
-    });
+  Future<void> _checkLoginStatus() async {
+    final authService = AuthService();
+    final isLoggedIn = await authService.isLoggedIn();
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => isLoggedIn ? HomePage() : const LoginPage(),
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-    return _loggedIn ? const HomePage() : const LoginPage();
+    return const Scaffold(
+      body: Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
   }
 }

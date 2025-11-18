@@ -1,7 +1,5 @@
 import '../models/task.dart';
 import '../models/log_entry.dart';
-import '../models/task.dart';
-
 
 class MockDataService {
   static final List<Task> _mockTasks = [
@@ -13,7 +11,7 @@ class MockDataService {
       creator: '1', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 7)),
       priority: TaskPriority.high,
-      status: TaskStatus.inProgress,
+      status: TaskStatus.in_progress,
       progress: 60,
       createdAt: DateTime.now().subtract(const Duration(days: 5)),
       updatedAt: DateTime.now().subtract(const Duration(hours: 2)),
@@ -26,7 +24,7 @@ class MockDataService {
       creator: '1', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 3)),
       priority: TaskPriority.medium,
-      status: TaskStatus.pending,
+      status: TaskStatus.not_started,
       progress: 0,
       createdAt: DateTime.now().subtract(const Duration(days: 2)),
       updatedAt: DateTime.now().subtract(const Duration(days: 2)),
@@ -52,7 +50,7 @@ class MockDataService {
       creator: '1', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 5)),
       priority: TaskPriority.high,
-      status: TaskStatus.inProgress,
+      status: TaskStatus.in_progress,
       progress: 30,
       createdAt: DateTime.now().subtract(const Duration(days: 3)),
       updatedAt: DateTime.now().subtract(const Duration(hours: 1)),
@@ -62,6 +60,7 @@ class MockDataService {
   static final List<LogEntry> _mockLogs = [
     LogEntry(
       id: '1',
+      title: '完成了项目文档的第一章节',
       content: '完成了项目文档的第一章节',
       taskId: '1',
       priority: TaskPriority.high,
@@ -71,6 +70,7 @@ class MockDataService {
     ),
     LogEntry(
       id: '2',
+      title: '开始进行代码审查工作',
       content: '开始进行代码审查工作',
       taskId: '2',
       priority: TaskPriority.medium,
@@ -80,6 +80,7 @@ class MockDataService {
     ),
     LogEntry(
       id: '3',
+      title: '今天的日常工作总结',
       content: '今天的日常工作总结',
       priority: TaskPriority.low,
       time: DateTime.now().subtract(const Duration(hours: 6)),

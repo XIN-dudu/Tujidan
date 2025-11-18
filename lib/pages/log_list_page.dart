@@ -374,7 +374,7 @@ class _LogListPageState extends State<LogListPage> {
               itemCount: _logs.length,
               itemBuilder: (context, index) {
                 final log = _logs[index];
-                print('logStatus: ${log.logStatus}');
+
                 return AnimatedListItem(
                   index: index,
                   child: Dismissible(

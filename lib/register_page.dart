@@ -53,7 +53,7 @@ class _RegisterPageState extends State<RegisterPage> {
     }
     // 注册成功，直接进入主页（因为已经保存了token）
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomePage()),
+      MaterialPageRoute(builder: (_) => HomePage()),
       (route) => false,
     );
   }

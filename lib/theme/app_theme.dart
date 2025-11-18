@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// 应用主题配置
@@ -76,7 +76,8 @@ class AppTheme {
 
   // 获取主题配置
   static ThemeData getTheme() {
-    final String? fontFamily = Platform.isWindows ? "微软雅黑" : null;
+    final bool isWindows = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+    final String? fontFamily = isWindows ? "微软雅黑" : null;
     return ThemeData(
       useMaterial3: true,
       colorSchemeSeed: Colors.indigo,
