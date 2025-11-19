@@ -17,7 +17,9 @@ const PORT = process.env.PORT || 3001;
 
 // 中间件
 app.use(cors());
-app.use(express.json());
+// 增加请求体大小限制，支持 base64 图片上传（50MB）
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Swagger 配置
 const swaggerOptions = {
@@ -177,6 +179,148 @@ const upload = multer({
   }
 });
 
+const IMAGE_MIME_MAP = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp'
+};
+
+const MAX_IMAGES_PER_REQUEST = 9;
+
+function normalizeMimeType(file) {
+  if (file?.mimetype && file.mimetype.startsWith('image/')) {
+    return file.mimetype;
+  }
+  const ext = path.extname(file?.originalname || '').toLowerCase();
+  return IMAGE_MIME_MAP[ext] || 'image/jpeg';
+}
+
+async function convertFileToDataUri(file) {
+  if (!file?.path) {
+    throw new Error('上传文件无效');
+  }
+  const buffer = await fs.promises.readFile(file.path);
+  const mimeType = normalizeMimeType(file);
+  const base64String = buffer.toString('base64');
+  return {
+    dataUri: `data:${mimeType};base64,${base64String}`,
+    meta: {
+      fileName: file.originalname || 'image',
+      fileSize: file.size || buffer.length,
+      mimeType
+    }
+  };
+}
+
+function cleanupUploadedFiles(files) {
+  if (!files) return;
+  files.forEach(file => {
+    if (file?.path && fs.existsSync(file.path)) {
+      try {
+        fs.unlinkSync(file.path);
+      } catch (err) {
+        console.error('删除临时文件失败:', err);
+      }
+    }
+  });
+}
+
+function formatImageRow(row) {
+  return {
+    id: row.id,
+    dataUri: row.image_data,
+    fileName: row.file_name,
+    fileSize: row.file_size,
+    mimeType: row.mime_type,
+    width: row.width,
+    height: row.height,
+    displayOrder: row.display_order,
+    createdAt: row.created_at
+  };
+}
+
+async function fetchImagesGrouped(connection, tableName, fkField, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return {};
+  const uniqueIds = [...new Set(ids)].filter(id => id !== null && id !== undefined);
+  if (uniqueIds.length === 0) return {};
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const [rows] = await connection.execute(
+    `SELECT id, ${fkField} AS owner_id, image_data, file_name, file_size, mime_type, width, height, display_order, created_at 
+     FROM ${tableName} 
+     WHERE ${fkField} IN (${placeholders}) 
+     ORDER BY ${fkField}, display_order, id`,
+    uniqueIds
+  );
+  return rows.reduce((acc, row) => {
+    if (!acc[row.owner_id]) acc[row.owner_id] = [];
+    acc[row.owner_id].push(formatImageRow(row));
+    return acc;
+  }, {});
+}
+
+async function attachImagesToRows(connection, rows, tableName, fkField) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const ids = [...new Set(rows.map(row => row.id).filter(id => id !== null && id !== undefined))];
+  const imageMap = await fetchImagesGrouped(connection, tableName, fkField, ids);
+  rows.forEach(row => {
+    row.images = imageMap[row.id] || [];
+  });
+  return rows;
+}
+
+async function getImagesForSingle(connection, tableName, fkField, id) {
+  if (id === null || id === undefined) return [];
+  const map = await fetchImagesGrouped(connection, tableName, fkField, [id]);
+  return map[id] || [];
+}
+
+async function enrichTaskRows(connection, tasks) {
+  await attachImagesToRows(connection, tasks, 'task_images', 'task_id');
+  return tasks;
+}
+
+async function enrichLogRows(connection, logs) {
+  await attachImagesToRows(connection, logs, 'log_images', 'log_id');
+  return logs;
+}
+
+async function saveDataUriImages(connection, tableName, fkField, ownerId, dataUris, startOrder = 0) {
+  if (!Array.isArray(dataUris) || dataUris.length === 0) return;
+  let order = startOrder;
+  for (const uri of dataUris) {
+    if (typeof uri !== 'string' || !uri.startsWith('data:')) continue;
+    
+    // 从 data URI 中提取 MIME 类型和文件大小
+    let mimeType = null;
+    let fileSize = null;
+    
+    // 解析 data URI: data:image/png;base64,xxx
+    const match = uri.match(/^data:([^;]+)(?:;base64)?,(.+)$/);
+    if (match) {
+      mimeType = match[1] || null;
+      const base64Data = match[2] || '';
+      // 计算 base64 解码后的实际文件大小（base64 编码会增加约 33%）
+      // 实际大小 = base64 长度 * 3 / 4（减去可能的填充）
+      const base64Length = base64Data.length;
+      const padding = (base64Data.match(/=/g) || []).length;
+      fileSize = Math.floor((base64Length * 3) / 4) - padding;
+    }
+    
+    // 生成默认文件名（基于时间戳和顺序）
+    const timestamp = Date.now();
+    const ext = mimeType ? (mimeType.includes('png') ? '.png' : mimeType.includes('webp') ? '.webp' : mimeType.includes('gif') ? '.gif' : '.jpg') : '.jpg';
+    const fileName = `image-${timestamp}-${order}${ext}`;
+    
+    await connection.execute(
+      `INSERT INTO ${tableName} (${fkField}, image_data, file_name, file_size, mime_type, display_order) VALUES (?, ?, ?, ?, ?, ?)`,
+      [ownerId, uri, fileName, fileSize, mimeType, order]
+    );
+    order += 1;
+  }
+}
+
 // 静态文件服务 - 提供头像访问
 app.use('/uploads/avatars', express.static(uploadsDir));
 
@@ -313,6 +457,18 @@ async function hasPermission(userId, permission) {
     console.error('检查权限失败:', e);
     return false;
   }
+}
+
+async function hasPermissionWithConnection(connection, userId, permission) {
+  const [permissions] = await connection.execute(`
+    SELECT DISTINCT p.perm_key 
+    FROM permissions p
+    JOIN role_permissions rp ON p.id = rp.permission_id
+    JOIN user_roles ur ON rp.role_id = ur.role_id
+    WHERE ur.user_id = ? AND p.perm_key = ?
+    LIMIT 1
+  `, [userId, permission]);
+  return permissions.length > 0;
 }
 
 // 获取数据库连接
@@ -945,6 +1101,202 @@ app.post('/api/user/avatar', auth, upload.single('avatar'), async (req, res) => 
   }
 });
 
+// ---- Log & Task Images ----
+
+app.post('/api/logs/:id/images', auth, upload.array('images', MAX_IMAGES_PER_REQUEST), async (req, res) => {
+  const logId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(logId)) {
+    return res.status(400).json({ success: false, message: '日志ID无效' });
+  }
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ success: false, message: '请至少上传一张图片' });
+  }
+
+  let connection;
+  try {
+    connection = await getConn();
+    const [logRows] = await connection.execute(
+      'SELECT id, author_user_id FROM logs WHERE id = ? LIMIT 1',
+      [logId]
+    );
+    if (logRows.length === 0) {
+      return res.status(404).json({ success: false, message: '日志不存在' });
+    }
+    const logRow = logRows[0];
+    if (logRow.author_user_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: '只能上传自己日志的图片' });
+    }
+
+    const [countRows] = await connection.execute(
+      'SELECT COUNT(*) AS cnt FROM log_images WHERE log_id = ?',
+      [logId]
+    );
+    let displayOrder = countRows[0]?.cnt || 0;
+
+    const insertedImages = [];
+    for (const file of req.files) {
+      const { dataUri, meta } = await convertFileToDataUri(file);
+      const [result] = await connection.execute(
+        'INSERT INTO log_images (log_id, image_data, file_name, file_size, mime_type, display_order) VALUES (?, ?, ?, ?, ?, ?)',
+        [logId, dataUri, meta.fileName, meta.fileSize, meta.mimeType, displayOrder]
+      );
+
+      insertedImages.push({
+        id: result.insertId,
+        dataUri,
+        fileName: meta.fileName,
+        fileSize: meta.fileSize,
+        mimeType: meta.mimeType,
+        displayOrder,
+      });
+      displayOrder += 1;
+    }
+
+    return res.json({ success: true, images: insertedImages });
+  } catch (e) {
+    console.error('上传日志图片失败:', e);
+    return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    cleanupUploadedFiles(req.files);
+    if (connection) {
+      await connection.end();
+    }
+  }
+});
+
+app.get('/api/logs/:id/images', auth, async (req, res) => {
+  const logId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(logId)) {
+    return res.status(400).json({ success: false, message: '日志ID无效' });
+  }
+  let connection;
+  try {
+    connection = await getConn();
+    const [logRows] = await connection.execute(
+      'SELECT id, author_user_id FROM logs WHERE id = ? LIMIT 1',
+      [logId]
+    );
+    if (logRows.length === 0) {
+      return res.status(404).json({ success: false, message: '日志不存在' });
+    }
+    const logRow = logRows[0];
+    if (logRow.author_user_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: '只能查看自己日志的图片' });
+    }
+
+    const images = await getImagesForSingle(connection, 'log_images', 'log_id', logId);
+    return res.json({ success: true, images });
+  } catch (e) {
+    console.error('获取日志图片失败:', e);
+    return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
+  }
+});
+
+app.post('/api/tasks/:id/images', auth, upload.array('images', MAX_IMAGES_PER_REQUEST), async (req, res) => {
+  const taskId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(taskId)) {
+    return res.status(400).json({ success: false, message: '任务ID无效' });
+  }
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ success: false, message: '请至少上传一张图片' });
+  }
+
+  let connection;
+  try {
+    connection = await getConn();
+    const [taskRows] = await connection.execute(
+      'SELECT id, creator_id, assignee_id FROM tasks WHERE id = ? LIMIT 1',
+      [taskId]
+    );
+    if (taskRows.length === 0) {
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    const taskRow = taskRows[0];
+    let canUpload = taskRow.creator_id === req.user.id || taskRow.assignee_id === req.user.id;
+    if (!canUpload) {
+      canUpload = await hasPermissionWithConnection(connection, req.user.id, 'task:edit_all');
+    }
+    if (!canUpload) {
+      return res.status(403).json({ success: false, message: '没有权限上传该任务的图片' });
+    }
+
+    const [countRows] = await connection.execute(
+      'SELECT COUNT(*) AS cnt FROM task_images WHERE task_id = ?',
+      [taskId]
+    );
+    let displayOrder = countRows[0]?.cnt || 0;
+
+    const insertedImages = [];
+    for (const file of req.files) {
+      const { dataUri, meta } = await convertFileToDataUri(file);
+      const [result] = await connection.execute(
+        'INSERT INTO task_images (task_id, image_data, file_name, file_size, mime_type, display_order) VALUES (?, ?, ?, ?, ?, ?)',
+        [taskId, dataUri, meta.fileName, meta.fileSize, meta.mimeType, displayOrder]
+      );
+
+      insertedImages.push({
+        id: result.insertId,
+        dataUri,
+        fileName: meta.fileName,
+        fileSize: meta.fileSize,
+        mimeType: meta.mimeType,
+        displayOrder,
+      });
+      displayOrder += 1;
+    }
+
+    return res.json({ success: true, images: insertedImages });
+  } catch (e) {
+    console.error('上传任务图片失败:', e);
+    return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    cleanupUploadedFiles(req.files);
+    if (connection) {
+      await connection.end();
+    }
+  }
+});
+
+app.get('/api/tasks/:id/images', auth, async (req, res) => {
+  const taskId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(taskId)) {
+    return res.status(400).json({ success: false, message: '任务ID无效' });
+  }
+  let connection;
+  try {
+    connection = await getConn();
+    const [taskRows] = await connection.execute(
+      'SELECT id, creator_id, assignee_id FROM tasks WHERE id = ? LIMIT 1',
+      [taskId]
+    );
+    if (taskRows.length === 0) {
+      return res.status(404).json({ success: false, message: '任务不存在' });
+    }
+    const taskRow = taskRows[0];
+    let canView = taskRow.creator_id === req.user.id || taskRow.assignee_id === req.user.id;
+    if (!canView) {
+      canView = await hasPermissionWithConnection(connection, req.user.id, 'task:view_all');
+    }
+    if (!canView) {
+      return res.status(403).json({ success: false, message: '没有权限查看该任务的图片' });
+    }
+
+    const images = await getImagesForSingle(connection, 'task_images', 'task_id', taskId);
+    return res.json({ success: true, images });
+  } catch (e) {
+    console.error('获取任务图片失败:', e);
+    return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
+  }
+});
+
 // ---- Users（用户搜索） ----
 
 /**
@@ -1087,8 +1439,10 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
       'SELECT * FROM logs WHERE task_id = ? ORDER BY created_at DESC LIMIT 10',
       [id]
     );
+    await enrichLogRows(connection, logRows);
 
     task.logs = logRows;
+    task.images = await getImagesForSingle(connection, 'task_images', 'task_id', task.id);
 
     await connection.end();
     res.json({ success: true, data: task });
@@ -1438,6 +1792,7 @@ app.get('/api/user/development-suggestions', auth, async (req, res) => {
     sql += ' ORDER BY lk.score DESC';
 
     const [rows] = await connection.execute(sql, params);
+    await enrichLogRows(connection, rows);
     await connection.end();
 
     // 提取关键词
@@ -1958,7 +2313,7 @@ app.get('/api/tasks', auth, async (req, res) => {
     sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
 
     const [rows] = await connection.execute(sql, params);
-
+    await enrichTaskRows(connection, rows);
     await connection.end();
 
     // 格式化任务数据以匹配前端期望
@@ -1974,7 +2329,8 @@ app.get('/api/tasks', auth, async (req, res) => {
       status: task.status,
       progress: task.progress,
       created_at: task.created_at,
-      updated_at: task.updated_at
+      updated_at: task.updated_at,
+      images: task.images || [],
     }));
 
     res.json({ success: true, data: formattedTasks });
@@ -2057,7 +2413,7 @@ app.get('/api/tasks', auth, async (req, res) => {
  */
 app.post('/api/tasks', auth, async (req, res) => {
   try {
-    const { name, description = null, priority = 'low', status = 'not_started', progress = 0, dueTime = null, planStartTime = null, ownerUserId } = req.body;
+    const { name, description = null, priority = 'low', status = 'not_started', progress = 0, dueTime = null, planStartTime = null, ownerUserId, images: imageDataUris = [] } = req.body;
     if (!name) {
       return res.status(400).json({ success: false, message: '任务名称必填' });
     }
@@ -2117,10 +2473,12 @@ app.post('/api/tasks', auth, async (req, res) => {
       'INSERT INTO tasks (task_name, description, priority, status, progress, plan_start_time, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [name, description, priority, taskStatus, Math.min(Math.max(progress, 0), 100), planStartDt, dueDt, finalAssigneeId, req.user.id]
     );
+    await saveDataUriImages(connection, 'task_images', 'task_id', result.insertId, Array.isArray(imageDataUris) ? imageDataUris : []);
     const [rows] = await connection.execute(
       'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?',
       [result.insertId]
     );
+    rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', result.insertId);
     await connection.end();
     res.status(201).json({ success: true, task: rows[0] });
   } catch (e) {
@@ -2182,7 +2540,7 @@ app.post('/api/tasks', auth, async (req, res) => {
 app.patch('/api/tasks/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { name, description, priority, status, progress, dueTime, planStartTime, ownerUserId } = req.body;
+    const { name, description, priority, status, progress, dueTime, planStartTime, ownerUserId, images: imageDataUris } = req.body;
     const connection = await getConn();
     
     // 检查任务是否存在
@@ -2205,6 +2563,7 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
           [progress, newStatus, id]
         );
         const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+        rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
         await connection.end();
         return res.json({ success: true, task: rows[0] });
       } else {
@@ -2221,7 +2580,17 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
       'UPDATE tasks SET task_name = COALESCE(?, task_name), description = COALESCE(?, description), priority = COALESCE(?, priority), status = COALESCE(?, status), progress = COALESCE(?, progress), plan_start_time = COALESCE(?, plan_start_time), plan_end_time = COALESCE(?, plan_end_time), assignee_id = COALESCE(?, assignee_id) WHERE id = ?',
       [name, description, priority, normalizeTaskStatus(status), progress, planStartDt, dueDt, ownerUserId, id]
     );
+    
+    // 更新图片：如果提供了 images 数组，则替换所有图片
+    if (Array.isArray(imageDataUris)) {
+      // 删除旧图片
+      await connection.execute('DELETE FROM task_images WHERE task_id = ?', [id]);
+      // 保存新图片
+      await saveDataUriImages(connection, 'task_images', 'task_id', id, imageDataUris);
+    }
+    
     const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
     await connection.end();
     res.json({ success: true, task: rows[0] });
   } catch (e) {
@@ -2314,10 +2683,11 @@ app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
       [progress, newStatus, id]
     );
 
-    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
-    await connection.end();
+  const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+  rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
+  await connection.end();
 
-    res.json({ success: true, task: rows[0] });
+  res.json({ success: true, task: rows[0] });
   } catch (e) {
     console.error('更新任务进度失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
@@ -2482,6 +2852,7 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
       await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [finalAssigneeId, 'not_started', id]);
     }
     const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
     await connection.end();
     res.json({ success: true, task: rows[0] });
   } catch (e) {
@@ -2573,6 +2944,7 @@ app.post('/api/tasks/:id/accept', auth, async (req, res) => {
     }
     await connection.execute('UPDATE tasks SET status = ? WHERE id = ?', ['in_progress', id]);
     const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
     await connection.end();
     res.json({ success: true, task: rows[0] });
   } catch (e) {
@@ -2623,6 +2995,7 @@ app.post('/api/tasks/:id/cancel-accept', auth, async (req, res) => {
     // 将状态改回待开始，不清空负责人（保留分配记录）
     await connection.execute('UPDATE tasks SET status = ? WHERE id = ?', ['not_started', id]);
     const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
+    rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
     await connection.end();
     res.json({ success: true, task: rows[0] });
   } catch (e) {
@@ -2711,6 +3084,7 @@ app.post('/api/logs', auth, async (req, res) => {
       createNewTask = null,
       syncTaskProgress = false,
       logStatus = 'pending',
+      images: imageDataUris = [],
     } = req.body;
     if (!content || typeof content !== 'string') {
       return res.status(400).json({ success: false, message: '日志内容不能为空' });
@@ -2734,10 +3108,12 @@ app.post('/api/logs', auth, async (req, res) => {
 
     const startDt = toMySQLDateTime(timeFrom);
     const endDt = toMySQLDateTime(timeTo);
+    // log_type 不能为 null，如果没有提供则使用默认值 'work'
+    const logType = type || 'work';
 
     const [lRes] = await connection.execute(
       'INSERT INTO logs (author_user_id, title, content, log_type, priority, progress, time_from, time_to, task_id, log_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [req.user.id, title, content, type, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'pending']
+      [req.user.id, title, content, logType, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'pending']
     );
 
     // ！！！！！！！！！！！！！！！！！！！！！！暂时关闭关键词提取功能！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！
@@ -2777,7 +3153,10 @@ app.post('/api/logs', auth, async (req, res) => {
       await connection.execute('UPDATE tasks SET progress = ?, priority = ? WHERE id = ?', [Math.min(Math.max(progress, 0), 100), priority, finalTaskId]);
     }
 
+    await saveDataUriImages(connection, 'log_images', 'log_id', lRes.insertId, Array.isArray(imageDataUris) ? imageDataUris : []);
+
     const [logRows] = await connection.execute('SELECT * FROM logs WHERE id = ?', [lRes.insertId]);
+    logRows[0].images = await getImagesForSingle(connection, 'log_images', 'log_id', lRes.insertId);
     let taskRow = null;
     if (finalTaskId) {
       const [tRows] = await connection.execute('SELECT id, task_name AS name, priority, progress, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [finalTaskId]);
@@ -2878,6 +3257,10 @@ app.get('/api/logs', auth, async (req, res) => {
     sql += ' ORDER BY created_at DESC LIMIT 100';
 
     const [rows] = await connection.execute(sql, params);
+    
+    // 加载图片数据
+    await enrichLogRows(connection, rows);
+    
     await connection.end();
 
     // 返回前端固定结构
@@ -2898,6 +3281,7 @@ app.get('/api/logs', auth, async (req, res) => {
         updatedAt: row.updated_at,
         taskId: row.task_id,
         logStatus: row.log_status, // 关键修复：返回日志状态
+        images: row.images || [],
       })),
       code: 200,
     });
@@ -2938,8 +3322,12 @@ app.get('/api/logs/:id', auth, async (req, res) => {
       'SELECT * FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1',
       [id, req.user.id]
     );
+    if (rows.length === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '日志不存在' });
+    }
+    rows[0].images = await getImagesForSingle(connection, 'log_images', 'log_id', rows[0].id);
     await connection.end();
-    if (rows.length === 0) return res.status(404).json({ success: false, message: '日志不存在' });
     res.json({ success: true, log: rows[0] });
   } catch (e) {
     console.error('获取日志失败:', e);
@@ -3158,7 +3546,7 @@ app.get('/api/logs/keywords', auth, async (req, res) => {
 app.patch('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false, logStatus } = req.body;
+    const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false, logStatus, images: imageDataUris } = req.body;
     
     const connection = await getConn();
     const [exists] = await connection.execute('SELECT id, task_id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
@@ -3223,6 +3611,10 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
         params
       );
     }
+    if (Array.isArray(imageDataUris)) {
+      await connection.execute('DELETE FROM log_images WHERE log_id = ?', [id]);
+      await saveDataUriImages(connection, 'log_images', 'log_id', id, imageDataUris);
+    }
     if (syncTaskProgress && (taskId || exists[0].task_id)) {
       const targetTaskId = taskId || exists[0].task_id;
       if (typeof progress === 'number') { // 只在 progress 是数字时才更新
@@ -3230,6 +3622,7 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
       }
     }
     const [rows] = await connection.execute('SELECT * FROM logs WHERE id = ?', [id]);
+    rows[0].images = await getImagesForSingle(connection, 'log_images', 'log_id', id);
     await connection.end();
     
     res.json({ success: true, log: rows[0] });

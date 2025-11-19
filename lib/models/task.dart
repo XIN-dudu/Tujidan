@@ -11,6 +11,7 @@ class Task {
   final int progress; // 0-100
   final DateTime createdAt;
   final DateTime updatedAt;
+  final List<String> images;
 
   Task({
     required this.id,
@@ -25,25 +26,68 @@ class Task {
     required this.progress,
     required this.createdAt,
     required this.updatedAt,
-  });
+    List<String>? images,
+  }) : images = images ?? const [];
 
-  factory Task.fromJson(Map<String, dynamic> json) {  return Task(
+  factory Task.fromJson(Map<String, dynamic> json) {
+    return Task(
       id: (json['id'] ?? '').toString(),
       name: json['name'] ?? '',
       description: json['description'] ?? '',
-      assignee: json['assignee']?.toString() ?? json['owner_user_id']?.toString() ?? '',
-      creator: json['creator']?.toString() ?? json['creator_user_id']?.toString() ?? '',
-      deadline: DateTime.parse((json['deadline'] ?? json['due_time'] ?? DateTime.now().toIso8601String()).toString()),
-      plannedStart: json['plan_start_time'] != null ? DateTime.parse(json['plan_start_time'].toString()) : null,
+      assignee:
+          json['assignee']?.toString() ??
+          json['owner_user_id']?.toString() ??
+          '',
+      creator:
+          json['creator']?.toString() ??
+          json['creator_user_id']?.toString() ??
+          '',
+      deadline: DateTime.parse(
+        (json['deadline'] ??
+                json['due_time'] ??
+                DateTime.now().toIso8601String())
+            .toString(),
+      ),
+      plannedStart: json['plan_start_time'] != null
+          ? DateTime.parse(json['plan_start_time'].toString())
+          : null,
       priority: TaskPriority.values.firstWhere(
         (e) => e.name == (json['priority'] ?? 'low'),
         orElse: () => TaskPriority.low,
       ),
       status: _mapStatus(json['status']),
       progress: json['progress'] ?? 0,
-      createdAt: DateTime.parse((json['createdAt'] ?? json['created_at'] ?? DateTime.now().toIso8601String()).toString()),
-      updatedAt: DateTime.parse((json['updatedAt'] ?? json['updated_at'] ?? DateTime.now().toIso8601String()).toString()),
+      createdAt: DateTime.parse(
+        (json['createdAt'] ??
+                json['created_at'] ??
+                DateTime.now().toIso8601String())
+            .toString(),
+      ),
+      updatedAt: DateTime.parse(
+        (json['updatedAt'] ??
+                json['updated_at'] ??
+                DateTime.now().toIso8601String())
+            .toString(),
+      ),
+      images: _parseImages(json['images']),
     );
+  }
+
+  static List<String> _parseImages(dynamic source) {
+    if (source is List) {
+      return source
+          .map((item) {
+            if (item is String) return item;
+            if (item is Map<String, dynamic>) {
+              return item['dataUri']?.toString() ??
+                  item['image_data']?.toString();
+            }
+            return null;
+          })
+          .whereType<String>()
+          .toList();
+    }
+    return const [];
   }
 
   static TaskStatus _mapStatus(dynamic v) {
@@ -83,6 +127,7 @@ class Task {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'creator': creator,
+      'images': images,
     };
   }
 
@@ -99,6 +144,7 @@ class Task {
     int? progress,
     DateTime? createdAt,
     DateTime? updatedAt,
+    List<String>? images,
   }) {
     return Task(
       id: id ?? this.id,
@@ -113,6 +159,7 @@ class Task {
       progress: progress ?? this.progress,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      images: images ?? this.images,
     );
   }
 }

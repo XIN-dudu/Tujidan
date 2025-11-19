@@ -15,7 +15,8 @@ class LogService {
 
     if (keyword != null && keyword.isNotEmpty) query.add('q=$keyword');
     if (type != null && type.isNotEmpty) query.add('type=$type');
-    if (startTime != null) query.add('startTime=${startTime.toIso8601String()}');
+    if (startTime != null)
+      query.add('startTime=${startTime.toIso8601String()}');
     if (endTime != null) query.add('endTime=${endTime.toIso8601String()}');
 
     final queryString = query.isNotEmpty ? '?${query.join('&')}' : '';
@@ -42,7 +43,9 @@ class LogService {
   }
 
   /// 根据任务 ID 获取日志
-  static Future<ApiResponse<List<LogEntry>>> getLogsByTaskId(String taskId) async {
+  static Future<ApiResponse<List<LogEntry>>> getLogsByTaskId(
+    String taskId,
+  ) async {
     return await ApiClient.get<List<LogEntry>>(
       '/logs?taskId=$taskId',
       fromJson: (data) => (data as List)
@@ -64,6 +67,7 @@ class LogService {
           ? int.tryParse(log.taskId!)
           : null,
       'logStatus': log.logStatus,
+      'images': log.images,
     };
     return await ApiClient.post<LogEntry>(
       '/logs',
@@ -85,6 +89,7 @@ class LogService {
           ? int.tryParse(log.taskId!)
           : null,
       'logStatus': log.logStatus,
+      'images': log.images,
     };
     return await ApiClient.patch<LogEntry>(
       '/logs/${log.id}',
@@ -117,7 +122,9 @@ class LogService {
   }
 
   /// 根据任务完成状态同步日志完成状态
-  static Future<ApiResponse<void>> syncLogCompletionByTask(String taskId) async {
+  static Future<ApiResponse<void>> syncLogCompletionByTask(
+    String taskId,
+  ) async {
     return await ApiClient.patch<void>('/logs/sync-by-task/$taskId');
   }
 }

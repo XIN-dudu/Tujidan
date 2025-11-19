@@ -1,5 +1,14 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import '../widgets/page_transitions.dart';
 import '../models/task.dart';
 import '../models/api_response.dart';
@@ -347,6 +356,13 @@ class _TaskViewPageState extends State<TaskViewPage> {
                   const SizedBox(height: 4),
                   Text(_task.description),
                 ],
+                // 显示任务图片
+                if (_task.images.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text('任务图片', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  _buildTaskImages(),
+                ],
                 const SizedBox(height: 24),
                 // 编辑按钮（创建者/管理员/领导可见，或被分配方可见）
                 if (_canEdit || _canEditProgress)
@@ -407,6 +423,202 @@ class _TaskViewPageState extends State<TaskViewPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Uint8List _decodeImageData(String dataUri) {
+    final parts = dataUri.split(',');
+    final base64Part = parts.length > 1 ? parts[1] : parts[0];
+    return base64Decode(base64Part);
+  }
+
+  // 预览图片
+  void _previewImage(int initialIndex) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _ImagePreviewPage(
+          images: _task.images,
+          initialIndex: initialIndex,
+        ),
+      ),
+    );
+  }
+
+  // 保存图片到相册
+  Future<void> _saveImageToGallery(int index) async {
+    try {
+      // 请求存储权限（Android 13+ 使用 photos，旧版本使用 storage）
+      PermissionStatus status;
+      if (await Permission.photos.isRestricted) {
+        status = await Permission.storage.request();
+      } else {
+        status = await Permission.photos.request();
+        if (!status.isGranted) {
+          status = await Permission.storage.request();
+        }
+      }
+      
+      if (!status.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('需要存储权限才能保存图片')),
+          );
+        }
+        return;
+      }
+
+      final imageBytes = _decodeImageData(_task.images[index]);
+      final result = await ImageGallerySaver.saveImage(
+        imageBytes,
+        quality: 100,
+        name: 'task_image_${DateTime.now().millisecondsSinceEpoch}',
+      );
+
+      if (mounted) {
+        if (result['isSuccess'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('图片已保存到相册')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('保存失败')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e')),
+        );
+      }
+    }
+  }
+
+  // 分享图片
+  Future<void> _shareImage(int index) async {
+    try {
+      final imageBytes = _decodeImageData(_task.images[index]);
+      // 创建临时文件路径
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/share_image_${DateTime.now().millisecondsSinceEpoch}.png');
+      await file.writeAsBytes(imageBytes);
+      
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: '分享任务图片',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('分享失败: $e')),
+        );
+      }
+    }
+  }
+
+  // 显示长按菜单
+  void _showImageMenu(BuildContext context, int index) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.save_alt),
+              title: const Text('保存到相册'),
+              onTap: () {
+                Navigator.pop(context);
+                _saveImageToGallery(index);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share),
+              title: const Text('分享'),
+              onTap: () {
+                Navigator.pop(context);
+                _shareImage(index);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 构建任务图片显示
+  Widget _buildTaskImages() {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        for (int i = 0; i < _task.images.length; i++)
+          GestureDetector(
+            onTap: () => _previewImage(i),
+            onLongPress: () => _showImageMenu(context, i),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                _decodeImageData(_task.images[i]),
+                width: 96,
+                height: 96,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// 图片预览页面
+class _ImagePreviewPage extends StatelessWidget {
+  final List<String> images;
+  final int initialIndex;
+
+  const _ImagePreviewPage({
+    required this.images,
+    this.initialIndex = 0,
+  });
+
+  Uint8List _decodeImageData(String dataUri) {
+    final parts = dataUri.split(',');
+    final base64Part = parts.length > 1 ? parts[1] : parts[0];
+    return base64Decode(base64Part);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          '${initialIndex + 1} / ${images.length}',
+          style: const TextStyle(color: Colors.white),
+        ),
+      ),
+      body: PhotoViewGallery.builder(
+        scrollPhysics: const BouncingScrollPhysics(),
+        builder: (BuildContext context, int index) {
+          return PhotoViewGalleryPageOptions(
+            imageProvider: MemoryImage(_decodeImageData(images[index])),
+            initialScale: PhotoViewComputedScale.contained,
+            minScale: PhotoViewComputedScale.contained,
+            maxScale: PhotoViewComputedScale.covered * 2,
+          );
+        },
+        itemCount: images.length,
+        loadingBuilder: (context, event) => Center(
+          child: CircularProgressIndicator(
+            value: event == null
+                ? 0
+                : event.cumulativeBytesLoaded / event.expectedTotalBytes!,
+          ),
+        ),
+        pageController: PageController(initialPage: initialIndex),
       ),
     );
   }

@@ -2,18 +2,19 @@ import 'task.dart';
 
 class LogEntry {
   final String id;
-  final String title;        // 新增：日志标题
+  final String title; // 新增：日志标题
   final String content;
-  final String? type;        // 新增：日志类型
+  final String? type; // 新增：日志类型
   final String? taskId;
   final TaskPriority priority;
-  final DateTime time;       // 原本日志时间
+  final DateTime time; // 原本日志时间
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? startTime; // 新增：开始时间
-  final DateTime? endTime;   // 新增：结束时间
-  final String logStatus;    // 主要状态字段：pending, completed, cancelled
-  final bool isCompleted;    // 新增：完成状态（从logStatus派生）
+  final DateTime? endTime; // 新增：结束时间
+  final String logStatus; // 主要状态字段：pending, completed, cancelled
+  final bool isCompleted; // 新增：完成状态（从logStatus派生）
+  final List<String> images;
 
   LogEntry({
     required this.id,
@@ -29,15 +30,18 @@ class LogEntry {
     this.endTime,
     this.logStatus = 'pending',
     bool? isCompleted,
-  }) : isCompleted = isCompleted ?? (logStatus == 'completed');
+    List<String>? images,
+  }) : images = images ?? const [],
+       isCompleted = isCompleted ?? (logStatus == 'completed');
 
   factory LogEntry.fromJson(Map<String, dynamic> json) {
     String toStringValue(dynamic v) => v == null ? '' : v.toString();
     String? toNullableString(dynamic v) => v == null ? null : v.toString();
     String? parseTaskId(dynamic v) {
       if (v == null) return null;
-      return v.toString();  // 直接转换为字符串，因为后端总是返回整数
+      return v.toString(); // 直接转换为字符串，因为后端总是返回整数
     }
+
     TaskPriority parsePriority(dynamic v) {
       final s = (v ?? '').toString();
       switch (s) {
@@ -50,6 +54,7 @@ class LogEntry {
           return TaskPriority.low;
       }
     }
+
     DateTime parseTime(dynamic v) {
       if (v == null) return DateTime.now();
       try {
@@ -67,7 +72,14 @@ class LogEntry {
       taskId: parseTaskId(json['taskId'] ?? json['task_id']),
       priority: parsePriority(json['priority']),
       // 优先使用后端的开始时间，其次 time/time_from，最后才用 createdAt
-      time: parseTime(json['startTime'] ?? json['start_time'] ?? json['time'] ?? json['time_from'] ?? json['createdAt'] ?? json['created_at']),
+      time: parseTime(
+        json['startTime'] ??
+            json['start_time'] ??
+            json['time'] ??
+            json['time_from'] ??
+            json['createdAt'] ??
+            json['created_at'],
+      ),
       createdAt: parseTime(json['createdAt'] ?? json['created_at']),
       updatedAt: parseTime(json['updatedAt'] ?? json['updated_at']),
       startTime: json['startTime'] != null
@@ -77,7 +89,25 @@ class LogEntry {
           ? parseTime(json['endTime'])
           : (json['end_time'] != null ? parseTime(json['end_time']) : null),
       logStatus: _normalizeLogStatus(json['log_status'] ?? json['logStatus']),
+      images: _parseImages(json['images']),
     );
+  }
+
+  static List<String> _parseImages(dynamic source) {
+    if (source is List) {
+      return source
+          .map((item) {
+            if (item is String) return item;
+            if (item is Map<String, dynamic>) {
+              return item['dataUri']?.toString() ??
+                  item['image_data']?.toString();
+            }
+            return null;
+          })
+          .whereType<String>()
+          .toList();
+    }
+    return const [];
   }
 
   Map<String, dynamic> toJson() {
@@ -95,6 +125,7 @@ class LogEntry {
       'end_time': endTime?.toIso8601String(),
       'log_status': logStatus,
       'isCompleted': isCompleted,
+      'images': images,
     };
   }
 
@@ -112,6 +143,7 @@ class LogEntry {
     DateTime? endTime,
     String? logStatus,
     bool? isCompleted,
+    List<String>? images,
   }) {
     final newLogStatus = logStatus ?? this.logStatus;
     return LogEntry(
@@ -128,6 +160,7 @@ class LogEntry {
       endTime: endTime ?? this.endTime,
       logStatus: newLogStatus,
       isCompleted: isCompleted,
+      images: images ?? this.images,
     );
   }
 

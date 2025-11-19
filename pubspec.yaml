@@ -40,6 +40,12 @@ dependencies:
   image_picker: ^1.0.7
   # 图表
   fl_chart: ^0.68.0
+  # 图片预览和操作
+  photo_view: ^0.14.0
+  share_plus: ^7.2.1
+  image_gallery_saver: ^2.0.3
+  permission_handler: ^11.3.0
+  path_provider: ^2.1.1
 
 dev_dependencies:
   flutter_test:

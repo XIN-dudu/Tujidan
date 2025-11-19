@@ -1,6 +1,14 @@
-import 'dart:ui';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import '../theme/app_theme.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/log_entry.dart';
 import '../models/task.dart';
 import '../models/api_response.dart';
@@ -29,7 +37,8 @@ class _LogEditPageState extends State<LogEditPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _contentController = TextEditingController();
-  
+  final ImagePicker _imagePicker = ImagePicker();
+
   Task? _selectedTask;
   TaskPriority _selectedPriority = TaskPriority.low;
   DateTime _selectedTime = DateTime.now();
@@ -40,6 +49,7 @@ class _LogEditPageState extends State<LogEditPage> {
   String _logStatus = 'pending'; // 日志状态：pending, completed, cancelled
   String? _selectedType; // work/study/life/other
   final List<String> _types = const ['work', 'study', 'life', 'other'];
+  List<String> _imageDataUris = [];
 
   @override
   void initState() {
@@ -67,7 +77,8 @@ class _LogEditPageState extends State<LogEditPage> {
     _startTime = log.startTime ?? log.time;
     _endTime = log.endTime;
     _logStatus = log.logStatus;
-    
+    _imageDataUris = List<String>.from(log.images);
+
     // 如果有关联任务，需要获取任务详情
     if (log.taskId != null) {
       _loadTaskDetails(log.taskId!);
@@ -87,9 +98,9 @@ class _LogEditPageState extends State<LogEditPage> {
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('加载任务信息失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('加载任务信息失败: $e')));
       }
     }
   }
@@ -108,7 +119,9 @@ class _LogEditPageState extends State<LogEditPage> {
 
     try {
       final logEntry = LogEntry(
-        id: widget.logEntry?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+        id:
+            widget.logEntry?.id ??
+            DateTime.now().millisecondsSinceEpoch.toString(),
         title: _titleController.text.trim(),
         content: _contentController.text.trim(),
         type: _selectedType,
@@ -120,6 +133,7 @@ class _LogEditPageState extends State<LogEditPage> {
         startTime: _startTime,
         endTime: _endTime,
         logStatus: _logStatus,
+        images: List<String>.from(_imageDataUris),
       );
 
       ApiResponse<LogEntry> response;
@@ -152,10 +166,7 @@ class _LogEditPageState extends State<LogEditPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('保存失败: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('保存失败: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -211,10 +222,7 @@ class _LogEditPageState extends State<LogEditPage> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('删除失败: $e'),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
           );
         }
       } finally {
@@ -223,11 +231,247 @@ class _LogEditPageState extends State<LogEditPage> {
     }
   }
 
+  Future<void> _pickImages() async {
+    final files = await _imagePicker.pickMultiImage(imageQuality: 85);
+    if (files.isEmpty) return;
+    final List<String> newImages = [];
+    for (final file in files) {
+      final dataUri = await _xFileToDataUri(file);
+      if (dataUri != null) {
+        newImages.add(dataUri);
+      }
+    }
+    if (newImages.isEmpty) return;
+    setState(() {
+      _imageDataUris.addAll(newImages);
+    });
+  }
+
+  Future<String?> _xFileToDataUri(XFile file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final mimeType = _detectMimeType(file.path);
+      final encoded = base64Encode(bytes);
+      return 'data:$mimeType;base64,$encoded';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _detectMimeType(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    return 'image/jpeg';
+  }
+
+  Uint8List _decodeImageData(String dataUri) {
+    final parts = dataUri.split(',');
+    final base64Part = parts.length > 1 ? parts[1] : parts[0];
+    return base64Decode(base64Part);
+  }
+
+  void _removeImage(int index) {
+    setState(() {
+      _imageDataUris.removeAt(index);
+    });
+  }
+
+  // 预览图片
+  void _previewImage(int initialIndex) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _ImagePreviewPage(
+          images: _imageDataUris,
+          initialIndex: initialIndex,
+        ),
+      ),
+    );
+  }
+
+  // 保存图片到相册
+  Future<void> _saveImageToGallery(int index) async {
+    try {
+      // 请求存储权限（Android 13+ 使用 photos，旧版本使用 storage）
+      PermissionStatus status;
+      if (await Permission.photos.isRestricted) {
+        status = await Permission.storage.request();
+      } else {
+        status = await Permission.photos.request();
+        if (!status.isGranted) {
+          status = await Permission.storage.request();
+        }
+      }
+      
+      if (!status.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('需要存储权限才能保存图片')),
+          );
+        }
+        return;
+      }
+
+      final imageBytes = _decodeImageData(_imageDataUris[index]);
+      final result = await ImageGallerySaver.saveImage(
+        imageBytes,
+        quality: 100,
+        name: 'log_image_${DateTime.now().millisecondsSinceEpoch}',
+      );
+
+      if (mounted) {
+        if (result['isSuccess'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('图片已保存到相册')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('保存失败')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e')),
+        );
+      }
+    }
+  }
+
+  // 分享图片
+  Future<void> _shareImage(int index) async {
+    try {
+      final imageBytes = _decodeImageData(_imageDataUris[index]);
+      // 创建临时文件路径
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/share_image_${DateTime.now().millisecondsSinceEpoch}.png');
+      await file.writeAsBytes(imageBytes);
+      
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: '分享日志图片',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('分享失败: $e')),
+        );
+      }
+    }
+  }
+
+  // 显示长按菜单
+  void _showImageMenu(BuildContext context, int index) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.save_alt),
+              title: const Text('保存到相册'),
+              onTap: () {
+                Navigator.pop(context);
+                _saveImageToGallery(index);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share),
+              title: const Text('分享'),
+              onTap: () {
+                Navigator.pop(context);
+                _shareImage(index);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImageAttachments() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('图片附件', style: TextStyle(fontWeight: FontWeight.bold)),
+            TextButton.icon(
+              onPressed: _isSaving ? null : _pickImages,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: const Text('添加图片'),
+            ),
+          ],
+        ),
+        if (_imageDataUris.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade300),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text('暂无图片，点击“添加图片”上传。'),
+          )
+        else
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (int i = 0; i < _imageDataUris.length; i++)
+                Stack(
+                  children: [
+                    GestureDetector(
+                      onTap: () => _previewImage(i),
+                      onLongPress: () => _showImageMenu(context, i),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.memory(
+                          _decodeImageData(_imageDataUris[i]),
+                          width: 96,
+                          height: 96,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: GestureDetector(
+                        onTap: () => _removeImage(i),
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            color: Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          padding: const EdgeInsets.all(4),
+                          child: const Icon(
+                            Icons.close,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.logEntry == null ? '写日志' : '编辑日志', style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          widget.logEntry == null ? '写日志' : '编辑日志',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
         actions: [
           if (widget.logEntry != null)
             IconButton(
@@ -247,210 +491,305 @@ class _LogEditPageState extends State<LogEditPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                    // 日志标题
-                    TextFormField(
-                      controller: _titleController,
-                      decoration: const InputDecoration(
-                        labelText: '日志标题',
-                        hintText: '请输入标题',
-                        border: OutlineInputBorder(),
+                      // 日志标题
+                      TextFormField(
+                        controller: _titleController,
+                        decoration: const InputDecoration(
+                          labelText: '日志标题',
+                          hintText: '请输入标题',
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 1,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return '标题不能为空';
+                          }
+                          return null;
+                        },
                       ),
-                      maxLines: 1,
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return '标题不能为空';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
+                      const SizedBox(height: 16),
 
-                    // 日志内容
-                    TextFormField(
-                      controller: _contentController,
-                      decoration: const InputDecoration(
-                        labelText: '日志内容',
-                        hintText: '请输入日志内容',
-                        border: OutlineInputBorder(),
+                      // 日志内容
+                      TextFormField(
+                        controller: _contentController,
+                        decoration: const InputDecoration(
+                          labelText: '日志内容',
+                          hintText: '请输入日志内容',
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 5,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return '日志内容不能为空';
+                          }
+                          return null;
+                        },
                       ),
-                      maxLines: 5,
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return '日志内容不能为空';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
+                      const SizedBox(height: 16),
+                      _buildImageAttachments(),
+                      const SizedBox(height: 16),
 
-                    // 日志类型
-                    Row(
-                      children: [
-                        const Text('日志类型：'),
-                        const SizedBox(width: 12),
-                        DropdownButton<String>(
-                          value: _selectedType,
-                          hint: const Text('选择类型'),
-                          items: _types
-                              .map((t) => DropdownMenuItem<String>(
+                      // 日志类型
+                      Row(
+                        children: [
+                          const Text('日志类型：'),
+                          const SizedBox(width: 12),
+                          DropdownButton<String>(
+                            value: _selectedType,
+                            hint: const Text('选择类型'),
+                            items: _types
+                                .map(
+                                  (t) => DropdownMenuItem<String>(
                                     value: t,
                                     child: Text(t),
-                                  ))
-                              .toList(),
-                          onChanged: (v) => setState(() => _selectedType = v),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) => setState(() => _selectedType = v),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 关联任务选择
+                      TaskSelector(
+                        selectedTask: _selectedTask,
+                        onTaskSelected: (task) {
+                          setState(() => _selectedTask = task);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 优先级选择
+                      PrioritySelector(
+                        selectedPriority: _selectedPriority,
+                        onPrioritySelected: (priority) {
+                          setState(() => _selectedPriority = priority);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 开始时间
+                      ListTile(
+                        title: const Text('开始时间'),
+                        subtitle: Text(
+                          _startTime == null
+                              ? '未选择'
+                              : '${_startTime!.year}-${_startTime!.month.toString().padLeft(2, '0')}-${_startTime!.day.toString().padLeft(2, '0')} ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}',
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 关联任务选择
-                    TaskSelector(
-                      selectedTask: _selectedTask,
-                      onTaskSelected: (task) {
-                        setState(() => _selectedTask = task);
-                      },
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 优先级选择
-                    PrioritySelector(
-                      selectedPriority: _selectedPriority,
-                      onPrioritySelected: (priority) {
-                        setState(() => _selectedPriority = priority);
-                      },
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 开始时间
-                    ListTile(
-                      title: const Text('开始时间'),
-                      subtitle: Text(_startTime == null
-                          ? '未选择'
-                          : '${_startTime!.year}-${_startTime!.month.toString().padLeft(2, '0')}-${_startTime!.day.toString().padLeft(2, '0')} ${_startTime!.hour.toString().padLeft(2, '0')}:${_startTime!.minute.toString().padLeft(2, '0')}'),
-                      trailing: const Icon(Icons.schedule),
-                      onTap: () async {
-                        final date = await showDatePicker(
-                          context: context,
-                          initialDate: _startTime ?? DateTime.now(),
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2035),
-                        );
-                        if (date != null) {
-                          final time = await showTimePicker(
+                        trailing: const Icon(Icons.schedule),
+                        onTap: () async {
+                          final date = await showDatePicker(
                             context: context,
-                            initialTime: TimeOfDay.fromDateTime(_startTime ?? DateTime.now()),
+                            initialDate: _startTime ?? DateTime.now(),
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2035),
                           );
-                          if (time != null) {
-                            setState(() {
-                              _startTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-                              if (_endTime != null && _endTime!.isBefore(_startTime!)) {
-                                _endTime = _startTime;
-                              }
-                            });
-                          }
-                        }
-                      },
-                    ),
-                    // 结束时间
-                    ListTile(
-                      title: const Text('结束时间'),
-                      subtitle: Text(_endTime == null
-                          ? '未选择'
-                          : '${_endTime!.year}-${_endTime!.month.toString().padLeft(2, '0')}-${_endTime!.day.toString().padLeft(2, '0')} ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}'),
-                      trailing: const Icon(Icons.event),
-                      onTap: () async {
-                        final date = await showDatePicker(
-                          context: context,
-                          initialDate: _endTime ?? (_startTime ?? DateTime.now()),
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2035),
-                        );
-                        if (date != null) {
-                          final time = await showTimePicker(
-                            context: context,
-                            initialTime: TimeOfDay.fromDateTime(_endTime ?? (_startTime ?? DateTime.now())),
-                          );
-                          if (time != null) {
-                            setState(() {
-                              _endTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
-                              if (_startTime != null && _endTime!.isBefore(_startTime!)) {
-                                _startTime = _endTime;
-                              }
-                            });
-                          }
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 日志状态选择
-                    Row(
-                      children: [
-                        const Text('日志状态：'),
-                        const SizedBox(width: 12),
-                        DropdownButton<String>(
-                          value: _logStatus,
-                          items: const [
-                            DropdownMenuItem<String>(
-                              value: 'pending',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.radio_button_unchecked, color: Colors.orange, size: 16),
-                                  SizedBox(width: 8),
-                                  Text('进行中'),
-                                ],
+                          if (date != null) {
+                            final time = await showTimePicker(
+                              context: context,
+                              initialTime: TimeOfDay.fromDateTime(
+                                _startTime ?? DateTime.now(),
                               ),
-                            ),
-                            DropdownMenuItem<String>(
-                              value: 'completed',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.check_circle, color: Colors.green, size: 16),
-                                  SizedBox(width: 8),
-                                  Text('已完成'),
-                                ],
-                              ),
-                            ),
-                            DropdownMenuItem<String>(
-                              value: 'cancelled',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.cancel, color: Colors.red, size: 16),
-                                  SizedBox(width: 8),
-                                  Text('已取消'),
-                                ],
-                              ),
-                            ),
-                          ],
-                          onChanged: (value) {
-                            if (value != null) {
+                            );
+                            if (time != null) {
                               setState(() {
-                                _logStatus = value;
+                                _startTime = DateTime(
+                                  date.year,
+                                  date.month,
+                                  date.day,
+                                  time.hour,
+                                  time.minute,
+                                );
+                                if (_endTime != null &&
+                                    _endTime!.isBefore(_startTime!)) {
+                                  _endTime = _startTime;
+                                }
                               });
                             }
-                          },
+                          }
+                        },
+                      ),
+                      // 结束时间
+                      ListTile(
+                        title: const Text('结束时间'),
+                        subtitle: Text(
+                          _endTime == null
+                              ? '未选择'
+                              : '${_endTime!.year}-${_endTime!.month.toString().padLeft(2, '0')}-${_endTime!.day.toString().padLeft(2, '0')} ${_endTime!.hour.toString().padLeft(2, '0')}:${_endTime!.minute.toString().padLeft(2, '0')}',
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
+                        trailing: const Icon(Icons.event),
+                        onTap: () async {
+                          final date = await showDatePicker(
+                            context: context,
+                            initialDate:
+                                _endTime ?? (_startTime ?? DateTime.now()),
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2035),
+                          );
+                          if (date != null) {
+                            final time = await showTimePicker(
+                              context: context,
+                              initialTime: TimeOfDay.fromDateTime(
+                                _endTime ?? (_startTime ?? DateTime.now()),
+                              ),
+                            );
+                            if (time != null) {
+                              setState(() {
+                                _endTime = DateTime(
+                                  date.year,
+                                  date.month,
+                                  date.day,
+                                  time.hour,
+                                  time.minute,
+                                );
+                                if (_startTime != null &&
+                                    _endTime!.isBefore(_startTime!)) {
+                                  _startTime = _endTime;
+                                }
+                              });
+                            }
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 16),
 
-                    // 保存按钮
-                    ElevatedButton(
-                      onPressed: _isSaving ? null : _saveLog,
-                      child: _isSaving
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text(widget.logEntry == null ? '创建日志' : '更新日志'),
-                    ),
-                    SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
-                  ],
+                      // 日志状态选择
+                      Row(
+                        children: [
+                          const Text('日志状态：'),
+                          const SizedBox(width: 12),
+                          DropdownButton<String>(
+                            value: _logStatus,
+                            items: const [
+                              DropdownMenuItem<String>(
+                                value: 'pending',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.radio_button_unchecked,
+                                      color: Colors.orange,
+                                      size: 16,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text('进行中'),
+                                  ],
+                                ),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: 'completed',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.check_circle,
+                                      color: Colors.green,
+                                      size: 16,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text('已完成'),
+                                  ],
+                                ),
+                              ),
+                              DropdownMenuItem<String>(
+                                value: 'cancelled',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.cancel,
+                                      color: Colors.red,
+                                      size: 16,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text('已取消'),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                setState(() {
+                                  _logStatus = value;
+                                });
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+
+                      // 保存按钮
+                      ElevatedButton(
+                        onPressed: _isSaving ? null : _saveLog,
+                        child: _isSaving
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(widget.logEntry == null ? '创建日志' : '更新日志'),
+                      ),
+                      SizedBox(
+                        height: MediaQuery.of(context).padding.bottom + 24,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
+    );
+  }
+}
+
+// 图片预览页面
+class _ImagePreviewPage extends StatelessWidget {
+  final List<String> images;
+  final int initialIndex;
+
+  const _ImagePreviewPage({
+    required this.images,
+    this.initialIndex = 0,
+  });
+
+  Uint8List _decodeImageData(String dataUri) {
+    final parts = dataUri.split(',');
+    final base64Part = parts.length > 1 ? parts[1] : parts[0];
+    return base64Decode(base64Part);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          '${initialIndex + 1} / ${images.length}',
+          style: const TextStyle(color: Colors.white),
+        ),
+      ),
+      body: PhotoViewGallery.builder(
+        scrollPhysics: const BouncingScrollPhysics(),
+        builder: (BuildContext context, int index) {
+          return PhotoViewGalleryPageOptions(
+            imageProvider: MemoryImage(_decodeImageData(images[index])),
+            initialScale: PhotoViewComputedScale.contained,
+            minScale: PhotoViewComputedScale.contained,
+            maxScale: PhotoViewComputedScale.covered * 2,
+          );
+        },
+        itemCount: images.length,
+        loadingBuilder: (context, event) => Center(
+          child: CircularProgressIndicator(
+            value: event == null
+                ? 0
+                : event.cumulativeBytesLoaded / event.expectedTotalBytes!,
           ),
+        ),
+        pageController: PageController(initialPage: initialIndex),
+      ),
     );
   }
 }

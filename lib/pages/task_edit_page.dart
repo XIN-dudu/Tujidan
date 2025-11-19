@@ -1,7 +1,15 @@
 import 'dart:async';
-import 'dart:ui';
-import '../theme/app_theme.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:photo_view/photo_view_gallery.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/task.dart';
 import '../models/api_response.dart';
 import '../services/task_service.dart';
@@ -12,7 +20,7 @@ class TaskEditPage extends StatefulWidget {
   final bool canEditAll; // 是否可以编辑所有字段
   final bool canEditProgressOnly; // 是否只能编辑进度
   const TaskEditPage({
-    super.key, 
+    super.key,
     this.task,
     this.canEditAll = true,
     this.canEditProgressOnly = false,
@@ -27,6 +35,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _desc = TextEditingController();
   final TextEditingController _assignee = TextEditingController();
+  final ImagePicker _imagePicker = ImagePicker();
   String? _assigneeId; // 存储用户ID
   DateTime? _due;
   DateTime? _planStart;
@@ -34,6 +43,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
   TaskStatus _status = TaskStatus.not_started;
   double _progress = 0;
   bool _saving = false;
+  List<String> _imageDataUris = [];
 
   @override
   void initState() {
@@ -47,6 +57,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
       _priority = widget.task!.priority;
       _status = widget.task!.status;
       _progress = widget.task!.progress.toDouble();
+      _imageDataUris = List<String>.from(widget.task!.images);
     }
   }
 
@@ -75,13 +86,17 @@ class _TaskEditPageState extends State<TaskEditPage> {
       progress: _progress.round(),
       createdAt: widget.task?.createdAt ?? now,
       updatedAt: now,
+      images: List<String>.from(_imageDataUris),
     );
 
     ApiResponse<Task> res;
     if (widget.task == null) {
       if (publish) {
         // 创建并分配
-        res = await TaskService.createAndPublishTask(task, assigneeId: _assigneeId);
+        res = await TaskService.createAndPublishTask(
+          task,
+          assigneeId: _assigneeId,
+        );
       } else {
         // 仅创建
         res = await TaskService.createTask(task);
@@ -95,46 +110,269 @@ class _TaskEditPageState extends State<TaskEditPage> {
       // The original instruction was to pop with `true`, which is already done.
       // However, the failed block suggests a SnackBar was intended for success cases.
       // Adding it for better UX consistency.
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('进度更新成功')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('进度更新成功')));
       Navigator.of(context).pop(true);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(res.message)));
     }
   }
 
   Future<void> _pickDue() async {
-    final d = await showDatePicker(context: context, initialDate: _due ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _due ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
     if (d != null) setState(() => _due = d);
   }
 
-  Future<void> _updateProgress() async {
-    if (widget.task == null) return;
-    setState(() => _saving = true);
-    
-    // 如果进度为100%，自动设置状态为"已完成"
-    if (_progress.round() == 100) {
-      _status = TaskStatus.completed;
-    }
-    
-    final res = await TaskService.updateTaskProgress(widget.task!.id, _progress.round());
-    if (!mounted) return;
-    setState(() => _saving = false);
-    if (res.success) {
-      // 如果状态已改变，更新任务状态
-      if (_status != widget.task!.status) {
-        final updatedTask = widget.task!.copyWith(status: _status);
-        await TaskService.updateTask(updatedTask);
+  Future<void> _pickImages() async {
+    final files = await _imagePicker.pickMultiImage(imageQuality: 85);
+    if (files.isEmpty) return;
+    final List<String> newImages = [];
+    for (final file in files) {
+      final dataUri = await _xFileToDataUri(file);
+      if (dataUri != null) {
+        newImages.add(dataUri);
       }
-      Navigator.of(context).pop(true);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
+    }
+    if (newImages.isEmpty) return;
+    setState(() {
+      _imageDataUris.addAll(newImages);
+    });
+  }
+
+  Future<String?> _xFileToDataUri(XFile file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final mimeType = _detectMimeType(file.path);
+      return 'data:$mimeType;base64,${base64Encode(bytes)}';
+    } catch (_) {
+      return null;
     }
   }
 
+  String _detectMimeType(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    return 'image/jpeg';
+  }
+
+  Uint8List _decodeImageData(String dataUri) {
+    final parts = dataUri.split(',');
+    final base64Part = parts.length > 1 ? parts[1] : parts[0];
+    return base64Decode(base64Part);
+  }
+
+  void _removeImage(int index) {
+    setState(() {
+      _imageDataUris.removeAt(index);
+    });
+  }
+
+  // 预览图片
+  void _previewImage(int initialIndex) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => _ImagePreviewPage(
+          images: _imageDataUris,
+          initialIndex: initialIndex,
+        ),
+      ),
+    );
+  }
+
+  // 保存图片到相册
+  Future<void> _saveImageToGallery(int index) async {
+    try {
+      // 请求存储权限（Android 13+ 使用 photos，旧版本使用 storage）
+      PermissionStatus status;
+      if (await Permission.photos.isRestricted) {
+        status = await Permission.storage.request();
+      } else {
+        status = await Permission.photos.request();
+        if (!status.isGranted) {
+          status = await Permission.storage.request();
+        }
+      }
+      
+      if (!status.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('需要存储权限才能保存图片')),
+          );
+        }
+        return;
+      }
+
+      final imageBytes = _decodeImageData(_imageDataUris[index]);
+      final result = await ImageGallerySaver.saveImage(
+        imageBytes,
+        quality: 100,
+        name: 'task_image_${DateTime.now().millisecondsSinceEpoch}',
+      );
+
+      if (mounted) {
+        if (result['isSuccess'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('图片已保存到相册')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('保存失败')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e')),
+        );
+      }
+    }
+  }
+
+  // 分享图片
+  Future<void> _shareImage(int index) async {
+    try {
+      final imageBytes = _decodeImageData(_imageDataUris[index]);
+      // 创建临时文件路径
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/share_image_${DateTime.now().millisecondsSinceEpoch}.png');
+      await file.writeAsBytes(imageBytes);
+      
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: '分享任务图片',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('分享失败: $e')),
+        );
+      }
+    }
+  }
+
+  // 显示长按菜单
+  void _showImageMenu(BuildContext context, int index) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.save_alt),
+              title: const Text('保存到相册'),
+              onTap: () {
+                Navigator.pop(context);
+                _saveImageToGallery(index);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share),
+              title: const Text('分享'),
+              onTap: () {
+                Navigator.pop(context);
+                _shareImage(index);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImageAttachments() {
+    final canEdit = widget.canEditAll && !widget.canEditProgressOnly;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('任务图片', style: TextStyle(fontWeight: FontWeight.bold)),
+            if (canEdit)
+              TextButton.icon(
+                onPressed: _saving ? null : _pickImages,
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: const Text('添加图片'),
+              ),
+          ],
+        ),
+        if (_imageDataUris.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade300),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(canEdit ? '暂无图片，点击“添加图片”上传。' : '暂无图片'),
+          )
+        else
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (int i = 0; i < _imageDataUris.length; i++)
+                Stack(
+                  children: [
+                    GestureDetector(
+                      onTap: () => _previewImage(i),
+                      onLongPress: () => _showImageMenu(context, i),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.memory(
+                          _decodeImageData(_imageDataUris[i]),
+                          width: 96,
+                          height: 96,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    if (canEdit)
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: GestureDetector(
+                          onTap: () => _removeImage(i),
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              color: Colors.black54,
+                              shape: BoxShape.circle,
+                            ),
+                            padding: const EdgeInsets.all(4),
+                            child: const Icon(
+                              Icons.close,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+
   Future<void> _pickPlanStart() async {
-    final d = await showDatePicker(context: context, initialDate: _planStart ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _planStart ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
     if (d != null) setState(() => _planStart = d);
   }
 
@@ -142,7 +380,10 @@ class _TaskEditPageState extends State<TaskEditPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.task == null ? '新建任务' : '编辑任务', style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          widget.task == null ? '新建任务' : '编辑任务',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -156,64 +397,107 @@ class _TaskEditPageState extends State<TaskEditPage> {
                 if (!widget.canEditProgressOnly) ...[
                   TextFormField(
                     controller: _name,
-                    decoration: const InputDecoration(labelText: '任务名称', border: OutlineInputBorder()),
-                    validator: (v) => (v == null || v.trim().isEmpty) ? '请输入任务名称' : null,
+                    decoration: const InputDecoration(
+                      labelText: '任务名称',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? '请输入任务名称' : null,
                     enabled: widget.canEditAll,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _desc,
                     maxLines: 3,
-                    decoration: const InputDecoration(labelText: '任务描述', border: OutlineInputBorder(), hintText: '可填写任务背景、目标等'),
+                    decoration: const InputDecoration(
+                      labelText: '任务描述',
+                      border: OutlineInputBorder(),
+                      hintText: '可填写任务背景、目标等',
+                    ),
                     enabled: widget.canEditAll,
                   ),
                   const SizedBox(height: 12),
-                  Row(children: [
-                    const Text('优先级：'),
-                    const SizedBox(width: 8),
-                    DropdownButton<TaskPriority>(
-                      value: _priority,
-                      items: TaskPriority.values
-                          .map((e) => DropdownMenuItem(value: e, child: Text(e.displayName)))
-                          .toList(),
-                      onChanged: widget.canEditAll ? (v) => setState(() => _priority = v ?? TaskPriority.low) : null,
-                    ),
-                  ]),
+                  _buildImageAttachments(),
                   const SizedBox(height: 12),
-                  Row(children: [
-                    const Text('任务状态：'),
-                    const SizedBox(width: 8),
-                    DropdownButton<TaskStatus>(
-                      value: _status,
-                      items: TaskStatus.values
-                          .map((e) => DropdownMenuItem(value: e, child: Text(e.displayName)))
-                          .toList(),
-                      onChanged: widget.canEditAll ? (v) => setState(() => _status = v ?? TaskStatus.not_started) : null,
-                    ),
-                  ]),
+                  Row(
+                    children: [
+                      const Text('优先级：'),
+                      const SizedBox(width: 8),
+                      DropdownButton<TaskPriority>(
+                        value: _priority,
+                        items: TaskPriority.values
+                            .map(
+                              (e) => DropdownMenuItem(
+                                value: e,
+                                child: Text(e.displayName),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: widget.canEditAll
+                            ? (v) => setState(
+                                () => _priority = v ?? TaskPriority.low,
+                              )
+                            : null,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Text('任务状态：'),
+                      const SizedBox(width: 8),
+                      DropdownButton<TaskStatus>(
+                        value: _status,
+                        items: TaskStatus.values
+                            .map(
+                              (e) => DropdownMenuItem(
+                                value: e,
+                                child: Text(e.displayName),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: widget.canEditAll
+                            ? (v) => setState(
+                                () => _status = v ?? TaskStatus.not_started,
+                              )
+                            : null,
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _assignee,
                     readOnly: true,
-                    decoration: const InputDecoration(labelText: '负责人（搜索用户名/姓名）', border: OutlineInputBorder()),
-                    onTap: widget.canEditAll ? () async {
-                      final Map<String, String>? picked = await showDialog<Map<String, String>>(
-                        context: context,
-                        builder: (context) => const _UserPickerDialog(),
-                      );
-                      if (picked != null) {
-                        setState(() {
-                          _assigneeId = picked['id'];
-                          _assignee.text = picked['name'] ?? '';
-                        });
-                      }
-                    } : null,
+                    decoration: const InputDecoration(
+                      labelText: '负责人（搜索用户名/姓名）',
+                      border: OutlineInputBorder(),
+                    ),
+                    onTap: widget.canEditAll
+                        ? () async {
+                            final Map<String, String>? picked =
+                                await showDialog<Map<String, String>>(
+                                  context: context,
+                                  builder: (context) =>
+                                      const _UserPickerDialog(),
+                                );
+                            if (picked != null) {
+                              setState(() {
+                                _assigneeId = picked['id'];
+                                _assignee.text = picked['name'] ?? '';
+                              });
+                            }
+                          }
+                        : null,
                   ),
                   const SizedBox(height: 12),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('计划开始时间'),
-                    subtitle: Text(_planStart == null ? '未选择' : '${_planStart!.year}-${_planStart!.month.toString().padLeft(2, '0')}-${_planStart!.day.toString().padLeft(2, '0')}'),
+                    subtitle: Text(
+                      _planStart == null
+                          ? '未选择'
+                          : '${_planStart!.year}-${_planStart!.month.toString().padLeft(2, '0')}-${_planStart!.day.toString().padLeft(2, '0')}',
+                    ),
                     trailing: const Icon(Icons.event),
                     onTap: widget.canEditAll ? _pickPlanStart : null,
                   ),
@@ -221,14 +505,21 @@ class _TaskEditPageState extends State<TaskEditPage> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('计划截止时间'),
-                    subtitle: Text(_due == null ? '未选择' : '${_due!.year}-${_due!.month.toString().padLeft(2, '0')}-${_due!.day.toString().padLeft(2, '0')}'),
+                    subtitle: Text(
+                      _due == null
+                          ? '未选择'
+                          : '${_due!.year}-${_due!.month.toString().padLeft(2, '0')}-${_due!.day.toString().padLeft(2, '0')}',
+                    ),
                     trailing: const Icon(Icons.event),
                     onTap: widget.canEditAll ? _pickDue : null,
                   ),
                   const SizedBox(height: 16),
                 ],
                 if (widget.task != null) ...[
-                  const Text('任务进度', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const Text(
+                    '任务进度',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
                   Slider(
                     value: _progress,
                     min: 0,
@@ -253,7 +544,11 @@ class _TaskEditPageState extends State<TaskEditPage> {
                   ElevatedButton(
                     onPressed: _saving ? null : () => _save(publish: false),
                     child: _saving
-                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Text('创建任务'),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
@@ -271,37 +566,34 @@ class _TaskEditPageState extends State<TaskEditPage> {
                 ] else ...[
                   // 编辑任务时，根据权限显示不同按钮
                   if (widget.canEditProgressOnly) ...[
-                    // 只能编辑进度时，只显示更新进度按钮
+                    // 只能编辑进度时，显示保存按钮（统一使用保存方法）
                     ElevatedButton(
-                      onPressed: _saving ? null : _updateProgress,
+                      onPressed: _saving ? null : () => _save(publish: false),
                       child: _saving
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('更新进度'),
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('保存'),
                       style: ElevatedButton.styleFrom(
                         minimumSize: const Size(double.infinity, 48),
                         backgroundColor: Colors.green,
                       ),
                     ),
                   ] else ...[
-                    // 可以编辑所有字段时，显示保存和更新进度按钮
+                    // 可以编辑所有字段时，只显示保存按钮（包含进度更新）
                     ElevatedButton(
                       onPressed: _saving ? null : () => _save(publish: false),
                       child: _saving
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Text('保存修改'),
                       style: ElevatedButton.styleFrom(
                         minimumSize: const Size(double.infinity, 48),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      onPressed: _saving ? null : _updateProgress,
-                      child: _saving
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('更新进度'),
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 48),
-                        backgroundColor: Colors.green,
                       ),
                     ),
                   ],
@@ -310,6 +602,58 @@ class _TaskEditPageState extends State<TaskEditPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// 图片预览页面
+class _ImagePreviewPage extends StatelessWidget {
+  final List<String> images;
+  final int initialIndex;
+
+  const _ImagePreviewPage({
+    required this.images,
+    this.initialIndex = 0,
+  });
+
+  Uint8List _decodeImageData(String dataUri) {
+    final parts = dataUri.split(',');
+    final base64Part = parts.length > 1 ? parts[1] : parts[0];
+    return base64Decode(base64Part);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          '${initialIndex + 1} / ${images.length}',
+          style: const TextStyle(color: Colors.white),
+        ),
+      ),
+      body: PhotoViewGallery.builder(
+        scrollPhysics: const BouncingScrollPhysics(),
+        builder: (BuildContext context, int index) {
+          return PhotoViewGalleryPageOptions(
+            imageProvider: MemoryImage(_decodeImageData(images[index])),
+            initialScale: PhotoViewComputedScale.contained,
+            minScale: PhotoViewComputedScale.contained,
+            maxScale: PhotoViewComputedScale.covered * 2,
+          );
+        },
+        itemCount: images.length,
+        loadingBuilder: (context, event) => Center(
+          child: CircularProgressIndicator(
+            value: event == null
+                ? 0
+                : event.cumulativeBytesLoaded / event.expectedTotalBytes!,
+          ),
+        ),
+        pageController: PageController(initialPage: initialIndex),
       ),
     );
   }
@@ -358,7 +702,9 @@ class _UserPickerDialogState extends State<_UserPickerDialog> {
     setState(() => _loading = true);
     try {
       final keyword = _q.text.trim();
-      final url = keyword.isEmpty ? '/users' : '/users?keyword=${Uri.encodeComponent(keyword)}';
+      final url = keyword.isEmpty
+          ? '/users'
+          : '/users?keyword=${Uri.encodeComponent(keyword)}';
       final res = await ApiClient.get<Map<String, dynamic>>(
         url,
         fromJson: (data) => data as Map<String, dynamic>,
@@ -367,7 +713,8 @@ class _UserPickerDialogState extends State<_UserPickerDialog> {
       setState(() {
         _loading = false;
         if (res.success && res.data != null) {
-          _list = (res.data!['users'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+          _list =
+              (res.data!['users'] as List?)?.cast<Map<String, dynamic>>() ?? [];
         } else {
           _list = [];
         }
@@ -391,7 +738,10 @@ class _UserPickerDialogState extends State<_UserPickerDialog> {
           TextField(
             controller: _q,
             decoration: InputDecoration(
-              suffixIcon: IconButton(icon: const Icon(Icons.search), onPressed: _search),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.search),
+                onPressed: _search,
+              ),
             ),
             onSubmitted: (_) => _search(),
           ),
@@ -402,36 +752,39 @@ class _UserPickerDialogState extends State<_UserPickerDialog> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _list.isEmpty
-                    ? const Center(
-                        child: Text(
-                          '暂无用户\n请尝试输入关键词搜索',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey),
+                ? const Center(
+                    child: Text(
+                      '暂无用户\n请尝试输入关键词搜索',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _list.length,
+                    itemBuilder: (context, i) {
+                      final u = _list[i];
+                      final name = (u['real_name'] ?? u['username'] ?? '未知')
+                          .toString();
+                      return ListTile(
+                        title: Text(name),
+                        subtitle: Text(
+                          'ID: ${u['id']}  用户名: ${u['username'] ?? ''}',
                         ),
-                      )
-                    : ListView.builder(
-                        itemCount: _list.length,
-                        itemBuilder: (context, i) {
-                          final u = _list[i];
-                          final name = (u['real_name'] ?? u['username'] ?? '未知').toString();
-                          return ListTile(
-                            title: Text(name),
-                            subtitle: Text('ID: ${u['id']}  用户名: ${u['username'] ?? ''}'),
-                            onTap: () => Navigator.of(context).pop({
-                              'id': u['id'].toString(),
-                              'name': name,
-                            }),
-                          );
-                        },
-                      ),
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop({'id': u['id'].toString(), 'name': name}),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
       ],
     );
   }
 }
-
-
