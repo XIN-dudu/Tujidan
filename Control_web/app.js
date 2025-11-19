@@ -10,6 +10,7 @@ const dataCache = {
   permissions: { data: null, timestamp: 0, ttl: 60000 }, // 60秒缓存
   tasks: { data: null, timestamp: 0, ttl: 10000 }, // 10秒缓存
   logs: { data: null, timestamp: 0, ttl: 10000 }, // 10秒缓存
+  topItems: { data: null, timestamp: 0, ttl: 60000 }, // 60秒缓存
 };
 
 // 防抖函数
@@ -106,6 +107,7 @@ function showLoginModal() {
 
 async function login(username, password) {
     try {
+        console.log('开始登录请求，API地址:', `${API_BASE}/login`);
         const response = await fetch(`${API_BASE}/login`, {
             method: 'POST',
             headers: {
@@ -114,7 +116,30 @@ async function login(username, password) {
             body: JSON.stringify({ username, password })
         });
         
+        console.log('登录响应状态:', response.status, response.statusText);
+        
+        // 检查响应状态
+        if (!response.ok) {
+            // 尝试解析错误消息
+            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const errorData = await response.json();
+                if (errorData.message) {
+                    errorMessage = errorData.message;
+                }
+            } catch (e) {
+                // 如果无法解析JSON，使用默认错误消息
+                const text = await response.text();
+                console.error('响应内容（非JSON）:', text.substring(0, 200));
+            }
+            alert('登录失败: ' + errorMessage);
+            showLoginModal();
+            return;
+        }
+        
+        // 解析成功响应
         const data = await response.json();
+        console.log('登录响应数据:', data);
         
         if (data.success) {
             authToken = data.token;
@@ -123,12 +148,20 @@ async function login(username, password) {
             document.getElementById('current-user').textContent = currentUser.realName || currentUser.username;
             loadDashboard();
         } else {
-            alert('登录失败: ' + data.message);
+            alert('登录失败: ' + (data.message || '未知错误'));
             showLoginModal();
         }
     } catch (error) {
         console.error('登录错误:', error);
-        alert('登录失败，请检查网络连接');
+        // 更详细的错误信息
+        let errorMessage = '登录失败，请检查网络连接';
+        if (error.message) {
+            errorMessage += '\n错误详情: ' + error.message;
+        }
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            errorMessage += '\n\n可能的原因:\n1. 后端服务器未运行\n2. API地址错误\n3. CORS跨域问题\n\n请确认后端服务器运行在 http://localhost:3002';
+        }
+        alert(errorMessage);
         showLoginModal();
     }
 }
@@ -157,7 +190,8 @@ function showPage(pageId) {
         'roles': '角色管理',
         'permissions': '权限管理',
         'tasks': '任务管理',
-        'logs': '日志管理'
+        'logs': '日志管理',
+        'top-items': '公司十大事项管理'
     };
     document.getElementById('page-title').textContent = titles[pageId];
     
@@ -181,6 +215,9 @@ function showPage(pageId) {
         case 'logs':
             loadLogs();
             break;
+        case 'top-items':
+            loadTopItems();
+            break;
     }
 }
 
@@ -202,8 +239,7 @@ async function loadDashboard() {
 
 async function loadUserStats() {
     try {
-        // 尝试使用管理员接口获取所有用户
-        const response = await fetch(`${API_BASE}/admin/users`, {
+        const response = await fetch(`${API_BASE}/users/stats`, {
             headers: {
                 'Authorization': `Bearer ${authToken}`,
                 'Content-Type': 'application/json'
@@ -211,23 +247,12 @@ async function loadUserStats() {
         });
         
         const data = await response.json();
-        if (data.success && data.users) {
-            document.getElementById('total-users').textContent = data.users.length;
-        } else {
-            // 如果管理员接口失败，尝试普通用户接口
-            const fallbackResponse = await fetch(`${API_BASE}/users`, {
-                headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            const fallbackData = await fallbackResponse.json();
-            if (fallbackData.success && fallbackData.users) {
-                document.getElementById('total-users').textContent = fallbackData.users.length;
-            } else {
-                document.getElementById('total-users').textContent = '0';
-            }
+        if (data.success && typeof data.totalUsers === 'number') {
+            document.getElementById('total-users').textContent = data.totalUsers;
+            return;
         }
+
+        document.getElementById('total-users').textContent = '0';
     } catch (error) {
         console.error('加载用户统计失败:', error);
         document.getElementById('total-users').textContent = '-';
@@ -300,24 +325,91 @@ async function loadRoleStats() {
 // 用户管理（带缓存优化）
 async function loadUsers(forceRefresh = false) {
     try {
+        // 检查 token
+        if (!authToken) {
+            const token = localStorage.getItem('auth_token');
+            if (token) {
+                authToken = token;
+            } else {
+                console.error('未找到认证token，需要重新登录');
+                showError('未登录，请重新登录');
+                checkAuth();
+                return;
+            }
+        }
+        
         // 检查缓存
         if (!forceRefresh && isCacheValid('users')) {
             console.log('使用缓存的用户列表');
-            displayUsers(dataCache.users.data);
+            displayUsers(dataCache.users.data.users || dataCache.users.data, dataCache.users.data.pagination);
             return;
         }
         
         console.log('开始加载用户列表...');
+        console.log('API地址:', `${API_BASE}/admin/users`);
+        console.log('Token存在:', !!authToken);
         
-        // 首先尝试管理员接口
-        const response = await fetch(`${API_BASE}/admin/users`, {
-            headers: {
-                'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
+        const page = 1;
+        const pageSize = 20;
+        
+        let response;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12秒超时
+        
+        try {
+            response = await fetch(`${API_BASE}/admin/users?page=${page}&pageSize=${pageSize}`, {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json'
+                },
+                signal: controller.signal
+            });
+        } catch (fetchError) {
+            clearTimeout(timeoutId);
+            console.error('网络请求失败:', fetchError);
+            if (fetchError.name === 'AbortError' || fetchError.message.includes('aborted')) {
+                throw new Error('请求超时（12秒），请检查后端服务器是否正常运行');
             }
-        });
+            if (fetchError.message.includes('Failed to fetch') || fetchError.name === 'TypeError') {
+                throw new Error('无法连接到后端服务器。请确认:\n1. 后端服务器运行在 http://localhost:3002\n2. 网络连接正常\n3. 没有CORS错误');
+            }
+            throw fetchError;
+        } finally {
+            clearTimeout(timeoutId);
+        }
         
         console.log('管理员接口响应状态:', response.status);
+        
+        // 检查响应状态
+        if (!response.ok) {
+            // 如果是401未授权，可能是token失效
+            if (response.status === 401) {
+                console.error('Token无效，需要重新登录');
+                localStorage.removeItem('auth_token');
+                authToken = null;
+                showError('登录已过期，请重新登录');
+                checkAuth();
+                return;
+            }
+            
+            // 尝试解析错误消息
+            let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+            try {
+                const errorData = await response.json();
+                if (errorData.message) {
+                    errorMessage = errorData.message;
+                }
+            } catch (e) {
+                // 如果无法解析JSON，尝试读取文本
+                try {
+                    const text = await response.text();
+                    console.error('错误响应内容:', text.substring(0, 200));
+                } catch (textError) {
+                    console.error('无法读取错误响应');
+                }
+            }
+            throw new Error(errorMessage);
+        }
         
         // 检查响应内容类型
         const contentType = response.headers.get('content-type');
@@ -333,60 +425,28 @@ async function loadUsers(forceRefresh = false) {
         console.log('管理员接口响应数据:', data);
         
         if (data.success) {
-            // 更新缓存
-            dataCache.users = { data: data.users, timestamp: Date.now(), ttl: dataCache.users.ttl };
-            displayUsers(data.users);
+            const cachePayload = { users: data.users, pagination: data.pagination };
+            dataCache.users = { data: cachePayload, timestamp: Date.now(), ttl: dataCache.users.ttl };
+            displayUsers(data.users, data.pagination);
             return;
-        }
-        
-        // 如果管理员接口失败，尝试调试接口
-        console.log('管理员接口失败，尝试调试接口...');
-        const debugResponse = await fetch(`${API_BASE}/debug/users`, {
-            headers: {
-                'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        console.log('调试接口响应状态:', debugResponse.status);
-        const debugData = await debugResponse.json();
-        console.log('调试接口响应数据:', debugData);
-        
-        if (debugData.success) {
-            dataCache.users = { data: debugData.users, timestamp: Date.now(), ttl: dataCache.users.ttl };
-            displayUsers(debugData.users);
-            console.log('调试信息:', debugData.debug);
-            return;
-        }
-        
-        // 如果调试接口也失败，尝试普通用户接口
-        console.log('调试接口失败，尝试普通用户接口...');
-        const fallbackResponse = await fetch(`${API_BASE}/users`, {
-            headers: {
-                'Authorization': `Bearer ${authToken}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        console.log('普通用户接口响应状态:', fallbackResponse.status);
-        const fallbackData = await fallbackResponse.json();
-        console.log('普通用户接口响应数据:', fallbackData);
-        
-        if (fallbackData.success) {
-            dataCache.users = { data: fallbackData.users, timestamp: Date.now(), ttl: dataCache.users.ttl };
-            displayUsers(fallbackData.users);
         } else {
-            const errorMsg = data.message || debugData.message || fallbackData.message || '未知错误';
-            console.error('所有接口都失败了:', errorMsg);
-            showError('加载用户列表失败: ' + errorMsg);
+            throw new Error(data.message || '加载用户列表失败');
         }
     } catch (error) {
         console.error('加载用户失败:', error);
-        showError('加载用户列表失败: ' + error.message);
+        
+        // 更友好的错误提示
+        let errorMessage = error.message || '未知错误';
+        
+        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('无法连接')) {
+            errorMessage = '无法连接到后端服务器\n\n可能的原因:\n1. 后端服务器未运行\n2. 服务器地址错误\n3. 网络连接问题\n4. CORS跨域限制\n\n请检查后端服务器是否在 http://localhost:3002 运行';
+        }
+        
+        showError('加载用户列表失败: ' + errorMessage);
     }
 }
 
-function displayUsers(users) {
+function displayUsers(users, pagination) {
     const tbody = document.getElementById('users-table');
     tbody.innerHTML = '';
     
@@ -1500,5 +1560,203 @@ async function deleteTask(taskId) {
     } catch (error) {
         console.error('删除任务失败:', error);
         showError('删除任务失败: ' + error.message);
+    }
+}
+
+// 公司十大事项管理
+let currentEditingTopItemId = null;
+let currentTopItems = [];
+
+async function loadTopItems(forceRefresh = false) {
+    try {
+        const topItemsCacheTtl = dataCache.topItems.ttl;
+        if (!forceRefresh && isCacheValid('topItems')) {
+            currentTopItems = dataCache.topItems.data || [];
+            displayTopItems(currentTopItems);
+            return;
+        }
+
+        const response = await fetch(`${API_BASE}/top-items`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            currentTopItems = data.items || [];
+            dataCache.topItems = { data: currentTopItems, timestamp: Date.now(), ttl: topItemsCacheTtl };
+            displayTopItems(currentTopItems);
+        } else {
+            showError('加载公司十大事项失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('加载公司十大事项失败:', error);
+        showError('加载公司十大事项失败: ' + error.message);
+    }
+}
+
+function displayTopItems(items) {
+    const tbody = document.getElementById('top-items-table');
+    if (!tbody) return;
+
+    if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">暂无事项</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = '';
+    items.forEach(item => {
+        const row = document.createElement('tr');
+        const creatorName = item.creator?.realName || item.creator?.username || (item.creator?.id ? ('用户' + item.creator.id) : '-');
+        const contentPreview = item.content ? (item.content.length > 80 ? item.content.substring(0, 80) + '...' : item.content) : '暂无内容';
+        row.innerHTML = `
+            <td>${item.orderIndex}</td>
+            <td>
+                <div class="fw-semibold">${item.title}</div>
+                <small class="text-muted d-block">${contentPreview}</small>
+            </td>
+            <td>${getTopItemStatusBadge(item.status)}</td>
+            <td>${creatorName}</td>
+            <td>${item.createdAt ? formatDate(item.createdAt) : '-'}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary me-1" onclick="editTopItem(${item.id})" title="编辑事项">
+                    <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteTopItem(${item.id})" title="删除事项">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+function getTopItemStatusBadge(status) {
+    const finalStatus = typeof status === 'string' ? parseInt(status, 10) : status;
+    if (finalStatus === 1) {
+        return '<span class="badge bg-success">显示</span>';
+    }
+    return '<span class="badge bg-secondary">隐藏</span>';
+}
+
+function showTopItemModal(itemId = null) {
+    const modalElement = document.getElementById('topItemModal');
+    const modal = new bootstrap.Modal(modalElement);
+    const titleEl = document.getElementById('topItemModalTitle');
+    const form = document.getElementById('topItemForm');
+
+    if (!form) return;
+
+    if (itemId) {
+        titleEl.textContent = '编辑事项';
+        currentEditingTopItemId = itemId;
+        const target = currentTopItems.find(item => item.id === itemId);
+        if (target) {
+            document.getElementById('topItemTitle').value = target.title || '';
+            document.getElementById('topItemContent').value = target.content || '';
+            document.getElementById('topItemOrder').value = target.orderIndex ?? '';
+            document.getElementById('topItemStatus').value = target.status?.toString() || '1';
+        }
+    } else {
+        titleEl.textContent = '新建事项';
+        currentEditingTopItemId = null;
+        form.reset();
+        document.getElementById('topItemStatus').value = '1';
+        document.getElementById('topItemOrder').value = '';
+    }
+
+    modal.show();
+}
+
+async function saveTopItem() {
+    const title = document.getElementById('topItemTitle').value.trim();
+    const content = document.getElementById('topItemContent').value.trim();
+    const orderIndexValue = document.getElementById('topItemOrder').value;
+    const statusValue = document.getElementById('topItemStatus').value;
+
+    if (!title) {
+        showError('事项标题不能为空');
+        return;
+    }
+
+    if (orderIndexValue === '') {
+        showError('排序序号不能为空');
+        return;
+    }
+
+    if (statusValue === '') {
+        showError('请选择状态');
+        return;
+    }
+
+    const payload = {
+        title,
+        content: content || null,
+        orderIndex: parseInt(orderIndexValue, 10),
+        status: parseInt(statusValue, 10)
+    };
+
+    try {
+        const url = currentEditingTopItemId ? `${API_BASE}/top-items/${currentEditingTopItemId}` : `${API_BASE}/top-items`;
+        const method = currentEditingTopItemId ? 'PUT' : 'POST';
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showSuccess(currentEditingTopItemId ? '事项更新成功' : '事项创建成功');
+            bootstrap.Modal.getInstance(document.getElementById('topItemModal')).hide();
+            currentEditingTopItemId = null;
+            clearCache('topItems');
+            loadTopItems(true);
+        } else {
+            showError('保存事项失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('保存事项失败:', error);
+        showError('保存事项失败: ' + error.message);
+    }
+}
+
+function editTopItem(itemId) {
+    showTopItemModal(itemId);
+}
+
+async function deleteTopItem(itemId) {
+    if (!confirm('⚠️ 警告：确定要删除这个事项吗？\n\n此操作不可撤销！')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/top-items/${itemId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            showSuccess('事项删除成功');
+            clearCache('topItems');
+            loadTopItems(true);
+        } else {
+            showError('删除事项失败: ' + data.message);
+        }
+    } catch (error) {
+        console.error('删除事项失败:', error);
+        showError('删除事项失败: ' + error.message);
     }
 }

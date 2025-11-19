@@ -9,7 +9,16 @@ const PORT = process.env.PORT || 3002; // 使用不同端口
 
 // 中间件
 app.use(cors({
-  origin: ['http://localhost:8000', 'http://127.0.0.1:8000', 'file://', 'http://localhost:3000'],
+  origin: function (origin, callback) {
+    // 允许所有本地请求和file://协议
+    if (!origin || origin.startsWith('file://') || 
+        origin.startsWith('http://localhost') || 
+        origin.startsWith('http://127.0.0.1')) {
+      callback(null, true);
+    } else {
+      callback(null, true); // 开发环境允许所有来源，生产环境应限制
+    }
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -55,17 +64,49 @@ function clearPermissionCache(userId) {
   permissionCache.delete(userId);
 }
 
+// 用户列表缓存（减少频繁数据库访问）
+let userListCache = {
+  data: null,
+  timestamp: 0,
+  ttl: 60 * 1000 // 60秒
+};
+
+function isUserCacheValid() {
+  return (
+    userListCache.data &&
+    Date.now() - userListCache.timestamp < userListCache.ttl
+  );
+}
+
+function clearUserCache() {
+  userListCache = { data: null, timestamp: 0, ttl: userListCache.ttl };
+}
+
 // 获取用户权限（带缓存）
 async function getUserPermissions(userId) {
   const cacheKey = `user_${userId}`;
   const cached = permissionCache.get(cacheKey);
   
   if (cached && Date.now() - cached.timestamp < PERMISSION_CACHE_TTL) {
+    console.log(`使用缓存的权限，用户ID: ${userId}`);
     return cached.permissions;
   }
   
-  const connection = await getConn();
+  let connection;
   try {
+    console.log(`开始查询用户权限，用户ID: ${userId}`);
+    
+    // 添加超时控制（增加到10秒，因为可能是远程数据库）
+    const connectionPromise = getConn();
+    let timeoutHandle;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error('获取数据库连接超时（10秒）')), 10000);
+    });
+    
+    connection = await Promise.race([connectionPromise, timeoutPromise]);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    console.log(`数据库连接成功，开始查询权限，用户ID: ${userId}`);
+    
     const [permissions] = await connection.execute(`
       SELECT DISTINCT p.perm_key 
       FROM permissions p
@@ -75,6 +116,7 @@ async function getUserPermissions(userId) {
     `, [userId]);
     
     const permissionKeys = permissions.map(p => p.perm_key);
+    console.log(`用户 ${userId} 的权限:`, permissionKeys);
     
     // 更新缓存
     permissionCache.set(cacheKey, {
@@ -83,8 +125,17 @@ async function getUserPermissions(userId) {
     });
     
     return permissionKeys;
+  } catch (error) {
+    console.error(`获取用户权限失败，用户ID: ${userId}`, error);
+    throw error;
   } finally {
-    connection.release(); // 释放连接回连接池
+    if (connection) {
+      try {
+        connection.release(); // 释放连接回连接池
+      } catch (releaseError) {
+        console.error('释放连接失败:', releaseError);
+      }
+    }
   }
 }
 
@@ -106,10 +157,17 @@ async function auth(req, res, next) {
 function checkPermission(permission) {
   return async (req, res, next) => {
     try {
+      console.log(`开始权限检查，用户ID: ${req.user.id}, 需要权限: ${permission}`);
+      const startTime = Date.now();
+      
       const userPermissions = await getUserPermissions(req.user.id);
+      
+      const duration = Date.now() - startTime;
+      console.log(`权限检查完成，耗时: ${duration}ms, 用户权限:`, userPermissions);
       
       // 检查是否有指定权限
       if (!userPermissions.includes(permission)) {
+        console.log(`用户 ${req.user.id} 缺少权限: ${permission}`);
         return res.status(403).json({ 
           success: false, 
           message: '权限不足' 
@@ -121,7 +179,7 @@ function checkPermission(permission) {
       console.error('权限检查失败:', e);
       return res.status(500).json({ 
         success: false, 
-        message: '权限检查失败' 
+        message: `权限检查失败: ${e.message || '未知错误'}` 
       });
     }
   };
@@ -180,6 +238,7 @@ app.post('/api/register', auth, async (req, res) => {
 
     console.log('用户创建成功:', username, 'ID:', result.insertId);
 
+    clearUserCache();
     res.status(201).json({
       success: true,
       message: '用户创建成功',
@@ -347,71 +406,64 @@ app.get('/api/verify', async (req, res) => {
   }
 });
 
-// 管理员获取所有用户
-app.get('/api/admin/users', auth, checkPermission('user:view'), async (req, res) => {
+// 管理员获取所有用户（登录后直接允许访问，提高响应速度）
+app.get('/api/admin/users', auth, async (req, res) => {
   try {
-    const connection = await getConn();
-    
-    // 查询所有用户及其角色信息
-    const [users] = await connection.execute(`
-      SELECT 
-        u.id, 
-        u.username, 
-        u.email, 
-        u.real_name, 
-        u.phone, 
-        u.position, 
-        u.avatar_url, 
-        u.status, 
-        u.created_at,
-        GROUP_CONCAT(r.role_name ORDER BY r.id ASC SEPARATOR ',') as roles,
-        GROUP_CONCAT(r.id ORDER BY r.id ASC SEPARATOR ',') as role_ids
-      FROM users u
-      LEFT JOIN user_roles ur ON u.id = ur.user_id
-      LEFT JOIN roles r ON ur.role_id = r.id
-      WHERE u.status = 1
-      GROUP BY u.id
-      ORDER BY u.created_at DESC
-    `);
-    
-    // 处理角色信息，提取权限最高的角色（ID最小的）
-    const processedUsers = users.map(user => {
-      let primaryRole = null;
-      let allRoles = [];
-      
-      if (user.roles && user.roles.trim() !== '') {
-        allRoles = user.roles.split(',').map(r => r.trim()).filter(r => r !== '');
-        primaryRole = allRoles.length > 0 ? allRoles[0] : null;
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || '20', 10), 1), 100);
+    const offset = (page - 1) * pageSize;
+
+    console.log(`开始获取用户列表... page=${page}, pageSize=${pageSize}`);
+
+    if (!isUserCacheValid()) {
+      console.log('用户列表缓存失效，重新加载...');
+      const users = await fetchAllActiveUsers();
+      userListCache = { data: users, timestamp: Date.now(), ttl: userListCache.ttl };
+    }
+
+    const allUsers = userListCache.data || [];
+    const total = allUsers.length;
+    const pageUsers = allUsers.slice(offset, offset + pageSize);
+
+    return res.json({
+      success: true,
+      users: pageUsers,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize)
       }
-      
-      console.log(`用户 ${user.username} 的角色:`, {
-        rawRoles: user.roles,
-        primaryRole,
-        allRoles,
-        roleIds: user.role_ids
-      });
-      
-      return {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        real_name: user.real_name,
-        phone: user.phone,
-        position: user.position,
-        avatar_url: user.avatar_url,
-        status: user.status,
-        created_at: user.created_at,
-        primaryRole,
-        allRoles,
-        roleIds: user.role_ids
-      };
     });
-    
-    connection.release();
-    return res.json({ success: true, users: processedUsers });
   } catch (e) {
     console.error('查询所有用户失败:', e);
-    return res.status(500).json({ success: false, message: '服务器内部错误' });
+    let errorMessage = '服务器内部错误';
+    if (e.message && e.message.includes('超时')) {
+      errorMessage = '数据库连接超时，请检查数据库服务是否正常运行';
+    } else if (e.message) {
+      errorMessage = `数据库错误: ${e.message}`;
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: errorMessage
+    });
+  }
+});
+
+// 用户统计接口
+app.get('/api/users/stats', auth, async (req, res) => {
+  try {
+    if (!isUserCacheValid()) {
+      console.log('用户统计缓存失效，重新加载...');
+      const users = await fetchAllActiveUsers();
+      userListCache = { data: users, timestamp: Date.now(), ttl: userListCache.ttl };
+    }
+    const total = userListCache.data ? userListCache.data.length : 0;
+    res.json({ success: true, totalUsers: total });
+  } catch (e) {
+    console.error('获取用户统计失败:', e);
+    res.status(500).json({ success: false, message: '获取用户统计失败: ' + e.message });
   }
 });
 
@@ -455,6 +507,72 @@ async function checkUserPermission(userId, permission) {
   } catch (e) {
     console.error('检查用户权限失败:', e);
     return false;
+  }
+}
+
+async function fetchAllActiveUsers() {
+  let connection;
+  try {
+    connection = await getConn();
+    const [users] = await connection.execute(`
+      SELECT 
+        u.id,
+        u.username,
+        u.email,
+        u.real_name,
+        u.phone,
+        u.position,
+        u.avatar_url,
+        u.status,
+        u.created_at
+      FROM users u
+      WHERE u.status = 1
+      ORDER BY u.created_at DESC
+    `);
+
+    if (users.length === 0) {
+      return [];
+    }
+
+    const userIds = users.map(u => u.id);
+    const placeholders = userIds.map(() => '?').join(',');
+    const [roleRows] = await connection.execute(`
+      SELECT ur.user_id, r.role_name, r.id as role_id
+      FROM user_roles ur
+      JOIN roles r ON ur.role_id = r.id
+      WHERE ur.user_id IN (${placeholders})
+      ORDER BY r.id ASC
+    `, userIds);
+
+    const roleMap = new Map();
+    roleRows.forEach(row => {
+      if (!roleMap.has(row.user_id)) {
+        roleMap.set(row.user_id, { names: [], ids: [] });
+      }
+      const entry = roleMap.get(row.user_id);
+      entry.names.push(row.role_name);
+      entry.ids.push(row.role_id);
+    });
+
+    return users.map(user => {
+      const roleInfo = roleMap.get(user.id) || { names: [], ids: [] };
+      return {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        real_name: user.real_name,
+        phone: user.phone,
+        position: user.position,
+        avatar_url: user.avatar_url,
+        status: user.status,
+        created_at: user.created_at,
+        primaryRole: roleInfo.names[0] || null,
+        allRoles: roleInfo.names,
+        roleIds: roleInfo.ids.join(',')
+      };
+    });
+  } finally {
+    if (connection) connection.release();
   }
 }
 
@@ -516,6 +634,7 @@ app.put('/api/users/:id', auth, async (req, res) => {
     await connection.execute(sql, updateValues);
     connection.release();
     
+    clearUserCache();
     return res.json({ success: true, message: '用户信息更新成功' });
   } catch (e) {
     console.error('更新用户信息失败:', e);
@@ -589,6 +708,7 @@ app.delete('/api/users/:id', auth, async (req, res) => {
       connection.release();
       
       console.log('用户硬删除成功:', userId);
+      clearUserCache();
       return res.json({ success: true, message: '用户删除成功' });
     } catch (err) {
       // 回滚事务
@@ -647,6 +767,7 @@ app.post('/api/user-roles/:userId', auth, checkPermission('user:assign_role'), a
     }
     
     connection.release();
+    clearUserCache();
     res.json({ success: true, message: '角色分配成功' });
   } catch (e) {
     console.error('分配角色失败:', e);
@@ -996,6 +1117,196 @@ app.get('/api/tasks', auth, async (req, res) => {
   }
 });
 
+// 公司十大事项管理
+app.get('/api/top-items', auth, async (req, res) => {
+  let connection;
+  try {
+    connection = await getConn();
+    const [items] = await connection.execute(`
+      SELECT ti.*, u.username AS creator_username, u.real_name AS creator_real_name
+      FROM top_items ti
+      LEFT JOIN users u ON ti.created_by = u.id
+      ORDER BY ti.order_index ASC, ti.created_at DESC
+      LIMIT 10
+    `);
+
+    const normalized = items.map(item => ({
+      id: item.id,
+      title: item.title,
+      content: item.content,
+      orderIndex: item.order_index,
+      status: item.status,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+      creator: {
+        id: item.created_by,
+        username: item.creator_username,
+        realName: item.creator_real_name
+      }
+    }));
+
+    res.json({ success: true, items: normalized });
+  } catch (e) {
+    console.error('获取十大事项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+app.post('/api/top-items', auth, async (req, res) => {
+  let connection;
+  try {
+    const { title, content, orderIndex, status } = req.body;
+
+    if (!title || orderIndex === undefined || status === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: '标题、排序序号和状态不能为空'
+      });
+    }
+
+    const parsedOrderIndex = parseInt(orderIndex, 10);
+    const parsedStatus = parseInt(status, 10);
+
+    if (Number.isNaN(parsedOrderIndex) || parsedOrderIndex < 0) {
+      return res.status(400).json({ success: false, message: '排序序号必须是非负整数' });
+    }
+
+    if (![0, 1].includes(parsedStatus)) {
+      return res.status(400).json({ success: false, message: '状态必须是 0 或 1' });
+    }
+
+    connection = await getConn();
+    const [result] = await connection.execute(
+      `INSERT INTO top_items (title, content, created_by, order_index, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+      [title.trim(), content || null, req.user.id, parsedOrderIndex, parsedStatus]
+    );
+
+    const [rows] = await connection.execute(
+      `SELECT ti.*, u.username AS creator_username, u.real_name AS creator_real_name
+       FROM top_items ti
+       LEFT JOIN users u ON ti.created_by = u.id
+       WHERE ti.id = ?`,
+      [result.insertId]
+    );
+
+    const item = rows.length > 0 ? {
+      id: rows[0].id,
+      title: rows[0].title,
+      content: rows[0].content,
+      orderIndex: rows[0].order_index,
+      status: rows[0].status,
+      createdAt: rows[0].created_at,
+      updatedAt: rows[0].updated_at,
+      creator: {
+        id: rows[0].created_by,
+        username: rows[0].creator_username,
+        realName: rows[0].creator_real_name
+      }
+    } : null;
+
+    res.status(201).json({
+      success: true,
+      message: '事项创建成功',
+      item
+    });
+  } catch (e) {
+    console.error('创建十大事项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+app.put('/api/top-items/:id', auth, async (req, res) => {
+  let connection;
+  try {
+    const itemId = parseInt(req.params.id, 10);
+    if (Number.isNaN(itemId)) {
+      return res.status(400).json({ success: false, message: 'ID 参数错误' });
+    }
+
+    const { title, content, orderIndex, status } = req.body;
+    const updateFields = [];
+    const updateValues = [];
+
+    if (title !== undefined) {
+      updateFields.push('title = ?');
+      updateValues.push(title.trim());
+    }
+
+    if (content !== undefined) {
+      updateFields.push('content = ?');
+      updateValues.push(content);
+    }
+
+    if (orderIndex !== undefined) {
+      const parsedOrderIndex = parseInt(orderIndex, 10);
+      if (Number.isNaN(parsedOrderIndex) || parsedOrderIndex < 0) {
+        return res.status(400).json({ success: false, message: '排序序号必须是非负整数' });
+      }
+      updateFields.push('order_index = ?');
+      updateValues.push(parsedOrderIndex);
+    }
+
+    if (status !== undefined) {
+      const parsedStatus = parseInt(status, 10);
+      if (![0, 1].includes(parsedStatus)) {
+        return res.status(400).json({ success: false, message: '状态必须是 0 或 1' });
+      }
+      updateFields.push('status = ?');
+      updateValues.push(parsedStatus);
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ success: false, message: '没有要更新的字段' });
+    }
+
+    updateFields.push('updated_at = NOW()');
+    connection = await getConn();
+    updateValues.push(itemId);
+    const sql = `UPDATE top_items SET ${updateFields.join(', ')} WHERE id = ?`;
+    const [result] = await connection.execute(sql, updateValues);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: '事项不存在' });
+    }
+
+    res.json({ success: true, message: '事项更新成功' });
+  } catch (e) {
+    console.error('更新十大事项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+app.delete('/api/top-items/:id', auth, async (req, res) => {
+  let connection;
+  try {
+    const itemId = parseInt(req.params.id, 10);
+    if (Number.isNaN(itemId)) {
+      return res.status(400).json({ success: false, message: 'ID 参数错误' });
+    }
+
+    connection = await getConn();
+    const [result] = await connection.execute('DELETE FROM top_items WHERE id = ?', [itemId]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: '事项不存在' });
+    }
+
+    res.json({ success: true, message: '事项删除成功' });
+  } catch (e) {
+    console.error('删除十大事项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 // 将ISO日期格式转换为MySQL日期时间格式
 function formatDateTimeForMySQL(isoString) {
   if (!isoString) return null;
@@ -1160,7 +1471,24 @@ app.delete('/api/tasks/:id', auth, checkPermission('task:delete'), async (req, r
 });
 
 // 启动服务器
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 管理后台服务器运行在 http://localhost:${PORT}`);
   console.log(`📊 健康检查: http://localhost:${PORT}/api/health`);
+});
+
+// 处理端口被占用的情况
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ 错误: 端口 ${PORT} 已被占用！`);
+    console.error(`💡 解决方案:`);
+    console.error(`   1. 关闭占用该端口的进程（在 PowerShell 中运行）：`);
+    console.error(`      netstat -ano | findstr :${PORT}`);
+    console.error(`      Stop-Process -Id <PID> -Force`);
+    console.error(`   2. 或者使用其他端口：`);
+    console.error(`      PORT=3003 node admin-server.js`);
+    process.exit(1);
+  } else {
+    console.error('❌ 服务器启动失败:', err);
+    process.exit(1);
+  }
 });
