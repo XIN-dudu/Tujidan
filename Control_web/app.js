@@ -726,21 +726,37 @@ function displayLogs(logs) {
     const tbody = document.getElementById('logs-table');
     tbody.innerHTML = '';
     
+    if (logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">暂无日志</td></tr>';
+        return;
+    }
+    
     logs.forEach(log => {
         const row = document.createElement('tr');
+        const contentPreview = log.content && log.content.length > 50 ? log.content.substring(0, 50) + '...' : (log.content || '-');
+        const authorName = log.realName || log.username || `用户${log.userId}`;
+        
         row.innerHTML = `
-            <td>${log.content.length > 50 ? log.content.substring(0, 50) + '...' : log.content}</td>
+            <td>${contentPreview}</td>
             <td><span class="badge bg-${getPriorityColor(log.priority)}">${getPriorityText(log.priority)}</span></td>
-            <td>用户${log.userId}</td>
+            <td>${authorName}</td>
             <td>${formatDate(log.createdAt)}</td>
             <td>${log.taskId ? '任务' + log.taskId : '-'}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary me-1" onclick="viewLogDetail(${log.id})" title="查看详情">
+                    <i class="bi bi-eye"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteLog(${log.id})" title="删除日志">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
         `;
         tbody.appendChild(row);
     });
 }
 
 // 用户管理模态框
-function showUserModal(userId = null) {
+async function showUserModal(userId = null) {
     const modal = new bootstrap.Modal(document.getElementById('userModal'));
     const title = document.getElementById('userModalTitle');
     const form = document.getElementById('userForm');
@@ -748,7 +764,7 @@ function showUserModal(userId = null) {
     if (userId) {
         title.textContent = '编辑用户';
         currentEditingUserId = userId;
-        loadUserData(userId);
+        await loadUserData(userId);
     } else {
         title.textContent = '添加用户';
         currentEditingUserId = null;
@@ -758,7 +774,7 @@ function showUserModal(userId = null) {
     }
     
     // 加载角色选项
-    loadRoleOptions();
+    await loadRoleOptions();
     
     modal.show();
 }
@@ -766,6 +782,7 @@ function showUserModal(userId = null) {
 // 加载用户数据用于编辑
 async function loadUserData(userId) {
     try {
+        // 加载用户基本信息
         const response = await fetch(`${API_BASE}/users/${userId}`, {
             headers: {
                 'Authorization': `Bearer ${authToken}`,
@@ -786,21 +803,70 @@ async function loadUserData(userId) {
             document.getElementById('password').value = '';
             document.getElementById('password').placeholder = '留空表示不修改密码';
         }
+        
+        // 加载用户的角色
+        try {
+            const roleResponse = await fetch(`${API_BASE}/user-roles/${userId}`, {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const roleData = await roleResponse.json();
+            const roleSelect = document.getElementById('userRoles');
+            
+            if (roleData.success && roleData.roles) {
+                // 清除之前的选择
+                Array.from(roleSelect.options).forEach(option => {
+                    option.selected = false;
+                });
+                
+                // 设置用户当前的角色为选中状态
+                const currentRoleIds = roleData.roles.map(r => r.id.toString());
+                Array.from(roleSelect.options).forEach(option => {
+                    if (currentRoleIds.includes(option.value)) {
+                        option.selected = true;
+                    }
+                });
+            }
+        } catch (roleError) {
+            console.error('加载用户角色失败:', roleError);
+        }
     } catch (error) {
         console.error('加载用户数据失败:', error);
         showError('加载用户数据失败');
     }
 }
 
-function loadRoleOptions() {
-    // 这里应该从API加载角色列表
-    const select = document.getElementById('userRoles');
-    select.innerHTML = `
-        <option value="1">创始人</option>
-        <option value="2">管理员</option>
-        <option value="3">部门负责人</option>
-        <option value="4">普通员工</option>
-    `;
+async function loadRoleOptions() {
+    try {
+        const response = await fetch(`${API_BASE}/roles`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        const select = document.getElementById('userRoles');
+        
+        if (data.success && data.roles) {
+            select.innerHTML = '';
+            data.roles.forEach(role => {
+                const option = document.createElement('option');
+                option.value = role.id;
+                option.textContent = `${role.role_name}${role.description ? ' - ' + role.description : ''}`;
+                select.appendChild(option);
+            });
+        } else {
+            select.innerHTML = '<option value="">加载角色失败</option>';
+        }
+    } catch (error) {
+        console.error('加载角色选项失败:', error);
+        const select = document.getElementById('userRoles');
+        select.innerHTML = '<option value="">加载角色失败</option>';
+    }
 }
 
 // 全局变量存储当前编辑的用户ID和角色ID
@@ -857,6 +923,38 @@ async function saveUser() {
         const data = await response.json();
         
         if (data.success) {
+            // 获取选中的角色
+            const roleSelect = document.getElementById('userRoles');
+            const selectedRoles = Array.from(roleSelect.selectedOptions).map(option => parseInt(option.value));
+            
+            // 确定用户ID（创建用户时从响应中获取，编辑用户时使用currentEditingUserId）
+            const userId = currentEditingUserId || (data.user && data.user.id);
+            
+            // 分配或更新角色
+            if (userId) {
+                try {
+                    const roleResponse = await fetch(`${API_BASE}/user-roles/${userId}`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${authToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ roleIds: selectedRoles })
+                    });
+                    
+                    const roleData = await roleResponse.json();
+                    if (!roleData.success) {
+                        console.warn('用户保存成功，但角色分配失败:', roleData.message);
+                        showError('用户保存成功，但角色分配失败: ' + roleData.message);
+                        return;
+                    }
+                } catch (roleError) {
+                    console.error('分配角色失败:', roleError);
+                    showError('用户保存成功，但角色分配失败: ' + roleError.message);
+                    return;
+                }
+            }
+            
             showSuccess(successMessage);
             bootstrap.Modal.getInstance(document.getElementById('userModal')).hide();
             currentEditingUserId = null;
@@ -1368,6 +1466,9 @@ async function showTaskModal(taskId = null) {
     const form = document.getElementById('taskForm');
     const progressContainer = document.getElementById('taskProgressContainer');
     
+    // 先加载用户列表（必须在加载任务数据之前，以便正确设置负责人）
+    await loadUserOptions();
+    
     if (taskId) {
         title.textContent = '编辑任务';
         currentEditingTaskId = taskId;
@@ -1381,9 +1482,6 @@ async function showTaskModal(taskId = null) {
         document.getElementById('taskProgress').value = 0;
         document.getElementById('progressValue').textContent = '0%';
     }
-    
-    // 加载用户列表
-    await loadUserOptions();
     
     modal.show();
 }
@@ -1407,7 +1505,11 @@ async function loadTaskData(taskId) {
                 document.getElementById('taskDescription').value = task.description || '';
                 document.getElementById('taskPriority').value = task.priority || 'low';
                 document.getElementById('taskStatus').value = task.status || 'pending';
-                document.getElementById('taskAssignee').value = task.assignee_id || '';
+                
+                // 获取负责人ID（支持多种字段格式）
+                const assigneeId = task.assignee_id || (task.assignee && task.assignee.id) || '';
+                document.getElementById('taskAssignee').value = assigneeId;
+                
                 document.getElementById('taskProgress').value = task.progress || 0;
                 document.getElementById('progressValue').textContent = (task.progress || 0) + '%';
                 
@@ -1759,4 +1861,136 @@ async function deleteTopItem(itemId) {
         console.error('删除事项失败:', error);
         showError('删除事项失败: ' + error.message);
     }
+}
+
+// 查看日志详情
+async function viewLogDetail(logId) {
+    try {
+        const response = await fetch(`${API_BASE}/logs/${logId}`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        // 检查响应状态
+        if (!response.ok) {
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+            } else {
+                const text = await response.text();
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+        }
+        
+        // 检查内容类型
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            console.error('响应不是JSON格式:', text.substring(0, 200));
+            throw new Error('服务器返回了非JSON格式的响应');
+        }
+        
+        const data = await response.json();
+        
+        if (data.success && data.log) {
+            const log = data.log;
+            const modal = new bootstrap.Modal(document.getElementById('logDetailModal'));
+            
+            // 填充日志详情
+            document.getElementById('logDetailTitle').textContent = log.title || '-';
+            document.getElementById('logDetailType').textContent = getLogTypeText(log.logType);
+            document.getElementById('logDetailPriority').innerHTML = `<span class="badge bg-${getPriorityColor(log.priority)}">${getPriorityText(log.priority)}</span>`;
+            document.getElementById('logDetailStatus').textContent = getLogStatusText(log.logStatus);
+            document.getElementById('logDetailContent').textContent = log.content || '-';
+            document.getElementById('logDetailTimeFrom').textContent = log.timeFrom ? formatDate(log.timeFrom) : '-';
+            document.getElementById('logDetailTimeTo').textContent = log.timeTo ? formatDate(log.timeTo) : '-';
+            document.getElementById('logDetailTotalHours').textContent = log.totalHours ? `${log.totalHours} 小时` : '-';
+            document.getElementById('logDetailTimeTag').textContent = log.timeTag || '-';
+            document.getElementById('logDetailAuthor').textContent = log.realName || log.username || `用户${log.userId}`;
+            document.getElementById('logDetailTask').textContent = log.taskId ? `任务 ${log.taskId}` : '-';
+            document.getElementById('logDetailProgress').textContent = log.progress !== null && log.progress !== undefined ? `${log.progress}%` : '-';
+            document.getElementById('logDetailCreatedAt').textContent = log.createdAt ? formatDate(log.createdAt) : '-';
+            document.getElementById('logDetailUpdatedAt').textContent = log.updatedAt ? formatDate(log.updatedAt) : '-';
+            
+            modal.show();
+        } else {
+            showError('获取日志详情失败: ' + (data.message || '未知错误'));
+        }
+    } catch (error) {
+        console.error('查看日志详情失败:', error);
+        showError('查看日志详情失败: ' + error.message);
+    }
+}
+
+// 删除日志
+async function deleteLog(logId) {
+    if (!confirm('⚠️ 警告：确定要删除这条日志吗？\n\n此操作不可撤销！')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/logs/${logId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        // 检查响应状态
+        if (!response.ok) {
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+            } else {
+                const text = await response.text();
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+        }
+        
+        // 检查内容类型
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            console.error('响应不是JSON格式:', text.substring(0, 200));
+            throw new Error('服务器返回了非JSON格式的响应');
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('日志删除成功');
+            loadLogs(); // 重新加载日志列表
+        } else {
+            showError('删除日志失败: ' + (data.message || '未知错误'));
+        }
+    } catch (error) {
+        console.error('删除日志失败:', error);
+        showError('删除日志失败: ' + error.message);
+    }
+}
+
+// 获取日志类型文本
+function getLogTypeText(logType) {
+    const typeMap = {
+        'work': '工作',
+        'study': '学习',
+        'life': '生活',
+        'other': '其他'
+    };
+    return typeMap[logType] || logType || '-';
+}
+
+// 获取日志状态文本
+function getLogStatusText(logStatus) {
+    const statusMap = {
+        'pending': '待处理',
+        'in_progress': '进行中',
+        'completed': '已完成'
+    };
+    return statusMap[logStatus] || logStatus || '-';
 }

@@ -29,15 +29,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// 数据库配置（与主后端相同）
+// 数据库配置（本地数据库）
 const dbConfig = {
-  host: '117.72.181.99',
-  user: 'tu',
-  password: 'tu123',
-  database: 'tujidan',
+  host: 'localhost', // 本地数据库地址
+  user: 'root', // 请根据您的本地MySQL用户名修改
+  password: '123456', // 请根据您的本地MySQL密码修改（如果设置了密码）
+  database: 'tujidan', // 数据库名称保持不变
   port: 3306,
   charset: 'utf8mb4',
-  connectTimeout: 60000,
+  connectTimeout: 10000, // 本地数据库连接超时时间改为10秒（比云数据库快）
   waitForConnections: true,
   connectionLimit: 10, // 连接池大小
   queueLimit: 0,
@@ -96,7 +96,7 @@ async function getUserPermissions(userId) {
   try {
     console.log(`开始查询用户权限，用户ID: ${userId}`);
     
-    // 添加超时控制（增加到10秒，因为可能是远程数据库）
+    // 添加超时控制（10秒，适用于本地数据库）
     const connectionPromise = getConn();
     let timeoutHandle;
     const timeoutPromise = new Promise((_, reject) => {
@@ -1037,7 +1037,76 @@ app.post('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), a
   }
 });
 
-// 获取日志列表
+// 获取单个日志详情（必须在 /api/logs 之前定义，因为路由按顺序匹配）
+app.get('/api/logs/:id', auth, async (req, res) => {
+  try {
+    const logId = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    
+    const [logs] = await connection.execute(`
+      SELECT l.*, u.username, u.real_name
+      FROM logs l
+      LEFT JOIN users u ON l.author_user_id = u.id
+      WHERE l.id = ?
+    `, [logId]);
+    
+    connection.release();
+    
+    if (logs.length === 0) {
+      return res.status(404).json({ success: false, message: '日志不存在' });
+    }
+    
+    const log = logs[0];
+    res.json({
+      success: true,
+      log: {
+        id: log.id,
+        title: log.title,
+        content: log.content,
+        logType: log.log_type,
+        priority: log.priority,
+        logStatus: log.log_status,
+        progress: log.progress,
+        timeFrom: log.time_from,
+        timeTo: log.time_to,
+        totalHours: log.total_hours,
+        timeTag: log.time_tag,
+        taskId: log.task_id,
+        userId: log.author_user_id,
+        username: log.username,
+        realName: log.real_name,
+        createdAt: log.created_at,
+        updatedAt: log.updated_at
+      }
+    });
+  } catch (e) {
+    console.error('获取日志详情失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 删除日志
+app.delete('/api/logs/:id', auth, async (req, res) => {
+  try {
+    const logId = parseInt(req.params.id, 10);
+    const connection = await getConn();
+    
+    const [result] = await connection.execute('DELETE FROM logs WHERE id = ?', [logId]);
+    
+    connection.release();
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: '日志不存在' });
+    }
+    
+    res.json({ success: true, message: '日志删除成功' });
+  } catch (e) {
+    console.error('删除日志失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+// 获取日志列表（必须在 /api/logs/:id 之后定义）
 app.get('/api/logs', auth, async (req, res) => {
   try {
     const connection = await getConn();
@@ -1057,12 +1126,21 @@ app.get('/api/logs', auth, async (req, res) => {
       success: true, 
       data: logs.map(log => ({
         id: log.id,
+        title: log.title,
         content: log.content,
+        logType: log.log_type,
         priority: log.priority,
+        logStatus: log.log_status,
+        progress: log.progress,
+        timeFrom: log.time_from,
+        timeTo: log.time_to,
+        totalHours: log.total_hours,
+        timeTag: log.time_tag,
         userId: log.author_user_id,
         username: log.username,
         realName: log.real_name,
         createdAt: log.created_at,
+        updatedAt: log.updated_at,
         taskId: log.task_id
       }))
     });
