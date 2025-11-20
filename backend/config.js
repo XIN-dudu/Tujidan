@@ -1,8 +1,8 @@
 // 数据库配置
 const config = {
-  host: '117.72.181.99',
-  user: 'tu',
-  password: 'tu123',
+  host: '127.0.0.1',
+  user: 'root',
+  password: '123456',
   database: 'tujidan',  // 修改为你的数据库名
   port: 3306,
   waitForConnections: true,

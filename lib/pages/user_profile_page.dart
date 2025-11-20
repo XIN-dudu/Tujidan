@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import '../services/user_service.dart';
 import '../services/mbti_service.dart';
 import '../auth_service.dart';
@@ -447,6 +448,20 @@ class _UserProfilePageState extends State<UserProfilePage> {
       }
     }
 
+    final username = (_userInfo!['username'] ?? '').toString();
+    final phone = (_userInfo!['phone'] ?? '').toString();
+    final email = (_userInfo!['email'] ?? '').toString();
+    final createdAtRaw = _userInfo!['created_at'];
+    DateTime? createdAt;
+    if (createdAtRaw != null) {
+      try {
+        createdAt = DateTime.parse(createdAtRaw.toString());
+      } catch (_) {}
+    }
+    final createdAtText = createdAt != null
+        ? DateFormat('yyyy-MM-dd HH:mm').format(createdAt)
+        : '未设置';
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -502,9 +517,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
             ),
             const SizedBox(height: 24),
             // 用户名和ID
-            _buildInfoRow('用户名', _userInfo!['username'] ?? ''),
+            _buildInfoRow('用户名', username.isNotEmpty ? username : '未设置'),
             const SizedBox(height: 8),
-            _buildInfoRow('用户ID', _userInfo!['id']?.toString() ?? ''),
+            _buildInfoRow('手机号', phone.isNotEmpty ? phone : '未设置'),
+            const SizedBox(height: 8),
+            _buildInfoRow('邮箱', email.isNotEmpty ? email : '未设置'),
+            const SizedBox(height: 8),
+            _buildInfoRow('建号时间', createdAtText),
           ],
         ),
       ),

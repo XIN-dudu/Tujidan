@@ -67,7 +67,8 @@ class UserService {
             'real_name': user['realName'], // 转换小驼峰为下划线
             'phone': user['phone'],
             'position': user['position'],
-            'avatar_url': avatarUrl, // 转换小驼峰为下划线
+          'avatar_url': avatarUrl, // 转换小驼峰为下划线
+          'created_at': user['createdAt'] ?? user['created_at'],
           };
         }
       }

@@ -1,9 +1,9 @@
-import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:test_flutter/auth_service.dart';
+import 'package:test_flutter/models/api_response.dart';
 import 'package:test_flutter/login_page.dart';
 import 'package:test_flutter/models/notification_item.dart';
 import 'package:test_flutter/pages/log_list_page.dart';
@@ -12,9 +12,15 @@ import 'package:test_flutter/pages/user_profile_page.dart';
 import 'package:test_flutter/pages/task_list_page.dart';
 import 'package:test_flutter/services/dashboard_service.dart';
 import 'package:test_flutter/models/dashboard_log_item.dart';
-import 'package:test_flutter/services/log_service.dart';
+import 'package:test_flutter/models/top_item.dart';
+import 'package:test_flutter/models/dashboard_task_item.dart';
 import 'package:test_flutter/models/log_entry.dart';
+import 'package:test_flutter/models/task.dart';
 import 'package:test_flutter/services/notification_service.dart';
+import 'package:test_flutter/services/top_item_service.dart';
+import 'package:test_flutter/services/log_service.dart';
+import 'package:test_flutter/services/task_service.dart';
+import 'package:test_flutter/services/user_service.dart';
 import 'package:test_flutter/theme/app_theme.dart';
 
 void main() async {
@@ -88,16 +94,42 @@ class QuadrantPage extends StatefulWidget {
 
 class _QuadrantPageState extends State<QuadrantPage> {
   final DateFormat _dateFormat = DateFormat('MM-dd HH:mm');
+  final DateFormat _topItemDateFormat = DateFormat('yyyy-MM-dd HH:mm');
+  final UserService _userService = UserService();
+  String? _currentUserId;
   bool _loadingLogs = false;
   String? _logError;
   List<DashboardLogItem> _dashboardLogs = [];
   bool _hasUnread = false;
 
+  bool _loadingTopItems = false;
+  String? _topItemsError;
+  List<TopItem> _topItems = [];
+  bool _loadingCompanyTasks = false;
+  String? _companyTaskError;
+  List<DashboardTaskItem> _companyTasks = [];
+  bool _loadingPersonalTopItems = false;
+  String? _personalTopItemsError;
+  List<TopItem> _personalTopItems = [];
+
   @override
   void initState() {
     super.initState();
+    _ensureCurrentUserId();
     _loadDashboardLogs();
+    _loadCompanyTasks();
+    _loadTopItems();
+     _loadPersonalTopItems();
     _refreshNotifications();
+  }
+
+  Future<void> _ensureCurrentUserId() async {
+    if (_currentUserId != null) return;
+    final user = await _userService.getCurrentUser();
+    if (!mounted) return;
+    setState(() {
+      _currentUserId = user?['id']?.toString();
+    });
   }
 
   Future<void> _loadDashboardLogs({bool showLoading = true}) async {
@@ -122,6 +154,291 @@ class _QuadrantPageState extends State<QuadrantPage> {
         _loadingLogs = false;
         _logError = response.message.isNotEmpty ? response.message : '加载失败';
       });
+    }
+  }
+
+  Future<void> _loadTopItems() async {
+    setState(() {
+      _loadingTopItems = true;
+      _topItemsError = null;
+    });
+
+    final response = await TopItemService.getTopItems(limit: 10);
+    if (!mounted) return;
+    if (response.success && response.data != null) {
+      setState(() {
+        _topItems = response.data!;
+        _loadingTopItems = false;
+      });
+    } else {
+      setState(() {
+        _loadingTopItems = false;
+        _topItemsError = response.message.isNotEmpty ? response.message : '加载失败';
+      });
+    }
+  }
+
+  Future<void> _loadPersonalTopItems() async {
+    setState(() {
+      _loadingPersonalTopItems = true;
+      _personalTopItemsError = null;
+    });
+
+    final response = await TopItemService.getPersonalTopItems(limit: 10);
+    if (!mounted) return;
+    if (response.success && response.data != null) {
+      setState(() {
+        _personalTopItems = response.data!;
+        _loadingPersonalTopItems = false;
+      });
+    } else {
+      setState(() {
+        _loadingPersonalTopItems = false;
+        _personalTopItemsError = response.message.isNotEmpty ? response.message : '加载失败';
+      });
+    }
+  }
+
+  Future<void> _openPersonalTopItemEditor({TopItem? item}) async {
+    final titleController = TextEditingController(text: item?.title ?? '');
+    final contentController = TextEditingController(text: item?.content ?? '');
+    bool saving = false;
+    String? error;
+
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> submit() async {
+              if (titleController.text.trim().isEmpty) {
+                setModalState(() => error = '标题不能为空');
+                return;
+              }
+              setModalState(() {
+                saving = true;
+                error = null;
+              });
+              ApiResponse<TopItem> resp;
+              if (item == null) {
+                resp = await TopItemService.createPersonalTopItem(
+                  title: titleController.text.trim(),
+                  content: contentController.text.trim().isEmpty ? null : contentController.text.trim(),
+                );
+              } else {
+                resp = await TopItemService.updatePersonalTopItem(
+                  item.id,
+                  title: titleController.text.trim(),
+                  content: contentController.text.trim(),
+                );
+              }
+
+              if (!mounted) return;
+              if (resp.success && resp.data != null) {
+                Navigator.pop(context, true);
+              } else {
+                setModalState(() {
+                  saving = false;
+                  error = resp.message.isNotEmpty ? resp.message : '操作失败';
+                });
+              }
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 20,
+                  right: 20,
+                  top: 20,
+                  bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          item == null ? '新增展示项' : '编辑展示项',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(context, false),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: titleController,
+                      decoration: const InputDecoration(
+                        labelText: '标题',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: contentController,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: '内容',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 8),
+                      Text(error!, style: const TextStyle(color: Colors.red)),
+                    ],
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: saving ? null : submit,
+                        child: saving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Text('保存'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (result == true) {
+      await _loadPersonalTopItems();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(item == null ? '添加成功' : '更新成功')));
+      }
+    }
+  }
+
+  Future<void> _deletePersonalTopItem(TopItem item) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要删除“${item.title}”吗？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除')),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final resp = await TopItemService.deletePersonalTopItem(item.id);
+    if (!mounted) return;
+    if (resp.success) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('删除成功')));
+      await _loadPersonalTopItems();
+    } else {
+      final msg = resp.message.isNotEmpty ? resp.message : '删除失败';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  void _showTopItemDetails(TopItem item) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) {
+        final content = (item.content ?? '').trim().isEmpty ? '暂无详细内容' : item.content!.trim();
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.title.isNotEmpty ? item.title : '未命名事项',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  content,
+                  style: const TextStyle(fontSize: 16, height: 1.4),
+                ),
+                if (item.updatedAt != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    '更新于：${_topItemDateFormat.format(item.updatedAt!)}',
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.bottomRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('关闭'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _loadCompanyTasks() async {
+    setState(() {
+      _loadingCompanyTasks = true;
+      _companyTaskError = null;
+    });
+
+    final response = await DashboardService.getDashboardTasks();
+    if (!mounted) return;
+    if (response.success && response.data != null) {
+      setState(() {
+        _companyTasks = response.data!;
+        _loadingCompanyTasks = false;
+      });
+    } else {
+      setState(() {
+        _loadingCompanyTasks = false;
+        _companyTaskError = response.message.isNotEmpty ? response.message : '加载失败';
+      });
+    }
+  }
+
+  Future<void> _pinTask(String taskId) async {
+    final resp = await DashboardService.pinTask(taskId);
+    if (!mounted) return;
+    if (resp.success) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('任务已添加')));
+      await _loadCompanyTasks();
+    } else {
+      final msg = resp.message.isNotEmpty ? resp.message : '添加失败';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _unpinTask(String taskId) async {
+    final resp = await DashboardService.unpinTask(taskId);
+    if (!mounted) return;
+    if (resp.success) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已移除任务')));
+      await _loadCompanyTasks();
+    } else {
+      final msg = resp.message.isNotEmpty ? resp.message : '移除失败';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
@@ -158,8 +475,15 @@ class _QuadrantPageState extends State<QuadrantPage> {
       return;
     }
 
-    final pinnedIds = _dashboardLogs.where((item) => item.isPinned).map((e) => e.id).toSet();
-    final List<LogEntry> logs = response.data!;
+    final pinnedIds = _dashboardLogs.map((item) => item.id).toSet();
+    final List<LogEntry> logs = response.data!
+        .where((log) => log.logStatus != 'completed')
+        .toList()
+      ..sort((a, b) {
+        final aTime = a.endTime ?? DateTime.now().add(const Duration(days: 3650));
+        final bTime = b.endTime ?? DateTime.now().add(const Duration(days: 3650));
+        return aTime.compareTo(bTime);
+      });
 
     await showModalBottomSheet(
       context: context,
@@ -212,6 +536,96 @@ class _QuadrantPageState extends State<QuadrantPage> {
                     },
                   ),
                 ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openAddTaskSheet() async {
+    await _ensureCurrentUserId();
+    final currentUserId = _currentUserId;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('无法获取当前用户信息')));
+      return;
+    }
+
+    final response = await TaskService.getTasks(limit: 100);
+    if (!mounted) return;
+    if (!response.success || response.data == null) {
+      final msg = response.message.isNotEmpty ? response.message : '获取任务失败';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      return;
+    }
+
+    final pinnedIds = _companyTasks.map((item) => item.id).toSet();
+    final List<Task> tasks = response.data!
+        .where((task) =>
+            (task.assignee == currentUserId || task.creator == currentUserId) &&
+            task.status != TaskStatus.completed)
+        .toList()
+      ..sort((a, b) => a.deadline.compareTo(b.deadline));
+
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      '选择要展示的任务',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (tasks.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('暂无可添加的任务'),
+                  )
+                else
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.6,
+                    child: ListView.builder(
+                      itemCount: tasks.length,
+                      itemBuilder: (context, index) {
+                        final task = tasks[index];
+                        final isPinned = pinnedIds.contains(task.id);
+                        final dueText = _dateFormat.format(task.deadline);
+                        return ListTile(
+                          enabled: !isPinned,
+                          title: Text(
+                            task.name.isNotEmpty ? task.name : '未命名任务',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text('截止：$dueText'),
+                          trailing: isPinned ? const Icon(Icons.push_pin, color: Colors.orange) : null,
+                          onTap: isPinned
+                              ? null
+                              : () async {
+                                  Navigator.pop(context);
+                                  await _pinTask(task.id);
+                                },
+                        );
+                      },
+                    ),
+                  ),
               ],
             ),
           ),
@@ -336,27 +750,52 @@ class _QuadrantPageState extends State<QuadrantPage> {
     return item.logStatus == 'completed' ? '已完成' : '进行中';
   }
 
+  Color _taskStatusColor(String status) {
+    switch (status) {
+      case 'in_progress':
+        return Colors.green;
+      case 'pending_assignment':
+      case 'not_started':
+        return Colors.orange;
+      case 'paused':
+        return Colors.blueGrey;
+      case 'cancelled':
+      case 'closed':
+        return Colors.grey;
+      case 'completed':
+        return Colors.teal;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  String _taskStatusLabel(String status) {
+    switch (status) {
+      case 'in_progress':
+        return '进行中';
+      case 'pending_assignment':
+        return '待分配';
+      case 'not_started':
+        return '未开始';
+      case 'paused':
+        return '暂停';
+      case 'completed':
+        return '已完成';
+      case 'closed':
+        return '已关闭';
+      case 'cancelled':
+        return '已取消';
+      default:
+        return '未开始';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tiles = [
-      _DashboardTile(
-        icon: Icons.star_rate,
-        title: '公司十大重要展示项',
-        start: Colors.pinkAccent,
-        end: Colors.orangeAccent,
-      ),
-      _DashboardTile(
-        icon: Icons.assignment,
-        title: '公司十大派发任务',
-        start: Colors.lightBlueAccent,
-        end: Colors.indigoAccent,
-      ),
-      _DashboardTile(
-        icon: Icons.insights,
-        title: '个人十大重要展示项',
-        start: Colors.greenAccent,
-        end: Colors.teal,
-      ),
+      _buildTopItemsTile(),
+      _buildCompanyTasksTile(),
+      _buildPersonalTopItemsTile(),
       _buildPersonalLogsTile(),
     ];
 
@@ -424,6 +863,448 @@ class _QuadrantPageState extends State<QuadrantPage> {
     );
   }
 
+  Widget _buildTopItemsTile() {
+    return Ink(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          colors: [Colors.pinkAccent, Colors.orangeAccent],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(color: Colors.orangeAccent.withOpacity(.2), blurRadius: 12, offset: const Offset(0, 6)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(.9),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.star_rate, color: Colors.pinkAccent, size: 28),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    '公司十大重要展示项',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _loadingTopItems ? null : _loadTopItems,
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  tooltip: '刷新',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(.32),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: _loadingTopItems
+                    ? const Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                      )
+                    : _topItemsError != null
+                        ? Center(
+                            child: Text(
+                              _topItemsError!,
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        : _topItems.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  '暂无展示项',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                              )
+                            : ListView.separated(
+                                itemCount: _topItems.length,
+                                itemBuilder: (context, index) {
+                                  final item = _topItems[index];
+                                  final preview = (item.content ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
+                                  return InkWell(
+                                    onTap: () => _showTopItemDetails(item),
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(.96),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                      child: Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          CircleAvatar(
+                                            backgroundColor: Colors.pinkAccent,
+                                            child: Text(
+                                              '${index + 1}',
+                                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  item.title.isNotEmpty ? item.title : '未命名事项',
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 15,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.black87,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  preview.isNotEmpty ? preview : '暂无详细内容',
+                                                  maxLines: 2,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(fontSize: 13, color: Colors.black54),
+                                                ),
+                                                if (item.updatedAt != null) ...[
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    _topItemDateFormat.format(item.updatedAt!),
+                                                    style: const TextStyle(fontSize: 12, color: Colors.black38),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          ),
+                                          const Icon(Icons.chevron_right, color: Colors.black38),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompanyTasksTile() {
+    return Ink(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF64B5F6), Color(0xFF1E88E5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(color: Colors.indigoAccent.withOpacity(.2), blurRadius: 12, offset: const Offset(0, 6)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(.9),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.assignment, color: Color(0xFF1E88E5), size: 28),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    '公司十大派发任务',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _companyTasks.length >= DashboardService.defaultLimit ? null : _openAddTaskSheet,
+                  icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+                  tooltip: '添加任务',
+                ),
+                IconButton(
+                  onPressed: _loadingCompanyTasks ? null : _loadCompanyTasks,
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  tooltip: '刷新',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(.32),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: _loadingCompanyTasks
+                    ? const Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                      )
+                    : _companyTaskError != null
+                        ? Center(
+                            child: Text(
+                              _companyTaskError!,
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        : _companyTasks.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  '暂无任务',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                              )
+                            : ListView.separated(
+                                itemCount: _companyTasks.length,
+                                itemBuilder: (context, index) {
+                                  final item = _companyTasks[index];
+                                  final dueText = item.dueTime != null ? _dateFormat.format(item.dueTime!) : '无截止时间';
+                                  final statusColor = _taskStatusColor(item.status);
+                                  final statusLabel = _taskStatusLabel(item.status);
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(.96),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(
+                                                item.name.isNotEmpty ? item.name : '未命名任务',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Colors.black87,
+                                                ),
+                                              ),
+                                            ),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: statusColor,
+                                                borderRadius: BorderRadius.circular(12),
+                                              ),
+                                              child: Text(
+                                                statusLabel,
+                                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          '截止：$dueText',
+                                          style: const TextStyle(color: Colors.black54, fontSize: 12),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              '进度：${item.progress}%',
+                                              style: const TextStyle(fontSize: 12, color: Colors.black54),
+                                            ),
+                                            TextButton(
+                                              onPressed: () => _unpinTask(item.id),
+                                              child: const Text('移除'),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPersonalTopItemsTile() {
+    return Ink(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF64DFDF), Color(0xFF20BF55)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(color: Colors.teal.withOpacity(.2), blurRadius: 12, offset: const Offset(0, 6)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(.9),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.insights, color: Color(0xFF20BF55), size: 28),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    '个人十大重要展示项',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _personalTopItems.length >= 10 ? null : () => _openPersonalTopItemEditor(),
+                  icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+                  tooltip: '添加展示项',
+                ),
+                IconButton(
+                  onPressed: _loadingPersonalTopItems ? null : _loadPersonalTopItems,
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  tooltip: '刷新',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(.32),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: _loadingPersonalTopItems
+                    ? const Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                      )
+                    : _personalTopItemsError != null
+                        ? Center(
+                            child: Text(
+                              _personalTopItemsError!,
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        : _personalTopItems.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  '暂无展示项',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                              )
+                            : ListView.separated(
+                                itemCount: _personalTopItems.length,
+                                itemBuilder: (context, index) {
+                                  final item = _personalTopItems[index];
+                                  final preview = (item.content ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(.96),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: InkWell(
+                                            onTap: () => _openPersonalTopItemEditor(item: item),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  item.title.isNotEmpty ? item.title : '未命名展示项',
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 15,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.black87,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  preview.isNotEmpty ? preview : '暂无内容',
+                                                  maxLines: 2,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: const TextStyle(fontSize: 13, color: Colors.black54),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.edit, size: 20),
+                                          tooltip: '编辑',
+                                          onPressed: () => _openPersonalTopItemEditor(item: item),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline, size: 20),
+                                          tooltip: '删除',
+                                          onPressed: () => _deletePersonalTopItem(item),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPersonalLogsTile() {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -463,9 +1344,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
                     ),
                   ),
                   IconButton(
-                    onPressed: _dashboardLogs.where((e) => e.isPinned).length >= DashboardService.defaultLimit
-                        ? null
-                        : _openAddLogSheet,
+                    onPressed: _dashboardLogs.length >= DashboardService.defaultLimit ? null : _openAddLogSheet,
                     icon: const Icon(Icons.add_circle_outline, color: Colors.white),
                     tooltip: '添加日志',
                   ),
@@ -571,11 +1450,10 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                           Row(
                                             mainAxisAlignment: MainAxisAlignment.end,
                                             children: [
-                                              if (item.isPinned)
-                                                TextButton(
-                                                  onPressed: () => _unpinLog(item.id),
-                                                  child: const Text('取消固定'),
-                                                ),
+                                              TextButton(
+                                                onPressed: () => _unpinLog(item.id),
+                                                child: const Text('移除'),
+                                              ),
                                             ],
                                           ),
                                         ],
@@ -597,62 +1475,6 @@ class _QuadrantPageState extends State<QuadrantPage> {
     final list = await NotificationService.getNotifications();
     if (!mounted) return;
     setState(() { _hasUnread = list.isNotEmpty; });
-  }
-}
-
-class _DashboardTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final Color start;
-  final Color end;
-
-  const _DashboardTile({
-    required this.icon,
-    required this.title,
-    required this.start,
-    required this.end,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () {},
-      child: Ink(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            colors: [start, end],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(color: end.withOpacity(.2), blurRadius: 12, offset: const Offset(0, 6)),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(.9),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: start, size: 28),
-              ),
-              const Spacer(),
-              Text(
-                title,
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 

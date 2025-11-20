@@ -4,9 +4,10 @@ import 'api_client.dart';
 
 class TaskService {
   // 获取所有任务
-  static Future<ApiResponse<List<Task>>> getTasks() async {
+  static Future<ApiResponse<List<Task>>> getTasks({int limit = 50}) async {
+    final query = limit > 0 ? '?limit=$limit' : '';
     return await ApiClient.get<List<Task>>(
-      '/tasks',
+      '/tasks$query',
       fromJson: (data) => (data as List)
           .map((item) => Task.fromJson(item as Map<String, dynamic>))
           .toList(),

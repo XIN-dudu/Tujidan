@@ -14,9 +14,9 @@ const path = require('path');
 
 // 数据库配置（与 simple_server_final.js 保持一致）
 const dbConfig = {
-  host: '117.72.181.99',
-  user: 'tu',
-  password: 'tu123',
+  host: '127.0.0.1',
+  user: 'root',
+  password: '123456',
   database: 'tujidan',
   port: 3306,
   charset: 'utf8mb4',

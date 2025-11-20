@@ -326,9 +326,9 @@ app.use('/uploads/avatars', express.static(uploadsDir));
 
 // 数据库配置（优化连接）
 const dbConfig = {
-  host: '117.72.181.99',
-  user: 'tu',
-  password: 'tu123',
+  host: '127.0.0.1',
+  user: 'root',
+  password: '123456',
   database: 'tujidan',
   port: 3306,
   charset: 'utf8mb4',
@@ -338,7 +338,10 @@ const dbConfig = {
 };
 
 const JWT_SECRET = 'your_jwt_secret_key_here_change_this_in_production';
-const DASHBOARD_LOG_LIMIT = 8;
+const DASHBOARD_LOG_LIMIT = 10;
+const DASHBOARD_TASK_LIMIT = 10;
+const TOP_ITEMS_LIMIT = 10;
+const PERSONAL_TOP_ITEMS_LIMIT = 10;
 
 // 工具: 规范化前端传来的时间为 MySQL DATETIME 格式
 function toMySQLDateTime(value) {
@@ -520,12 +523,124 @@ async function setMbtiCache(userId, type, dataObj) {
 async function ensureDashboardLogsTable(connection) {
   await connection.execute(`
     CREATE TABLE IF NOT EXISTS user_dashboard_logs (
-      user_id INT NOT NULL,
-      log_id INT NOT NULL,
+      user_id BIGINT NOT NULL,
+      log_id BIGINT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (user_id, log_id),
       INDEX idx_log_id (log_id),
       CONSTRAINT fk_dashboard_log_log FOREIGN KEY (log_id) REFERENCES logs(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+}
+
+async function ensureDashboardTasksTable(connection) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS user_dashboard_tasks (
+      user_id BIGINT NOT NULL,
+      task_id BIGINT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, task_id),
+      INDEX idx_task_id (task_id),
+      CONSTRAINT fk_dashboard_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+  try {
+    await connection.execute('ALTER TABLE user_dashboard_tasks MODIFY task_id BIGINT NOT NULL');
+  } catch (e) {
+    // ignore if already correct
+  }
+}
+
+async function ensureUserTopItemsTable(connection) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS user_top_items (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      user_id BIGINT NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      content TEXT NULL,
+      order_index INT DEFAULT 0,
+      status TINYINT DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_user_order (user_id, order_index),
+      INDEX idx_user_status_order (user_id, status, order_index),
+      CONSTRAINT fk_user_top_items_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+}
+
+async function seedDashboardLogs(connection, userId) {
+  const [[countRow]] = await connection.execute(
+    'SELECT COUNT(*) AS cnt FROM user_dashboard_logs WHERE user_id = ?',
+    [userId]
+  );
+  if ((countRow?.cnt || 0) > 0) return;
+
+  const [rows] = await connection.execute(
+    `
+      SELECT id
+      FROM logs
+      WHERE author_user_id = ?
+        AND (log_status IS NULL OR log_status != 'completed')
+      ORDER BY
+        CASE WHEN time_to IS NULL THEN 1 ELSE 0 END,
+        time_to ASC,
+        created_at DESC
+      LIMIT ${DASHBOARD_LOG_LIMIT}
+    `,
+    [userId]
+  );
+
+  for (const row of rows) {
+    await connection.execute(
+      'INSERT IGNORE INTO user_dashboard_logs (user_id, log_id) VALUES (?, ?)',
+      [userId, row.id]
+    );
+  }
+}
+
+async function seedDashboardTasks(connection, userId) {
+  const [[countRow]] = await connection.execute(
+    'SELECT COUNT(*) AS cnt FROM user_dashboard_tasks WHERE user_id = ?',
+    [userId]
+  );
+  if ((countRow?.cnt || 0) > 0) return;
+
+  const [rows] = await connection.execute(
+    `
+      SELECT id
+      FROM tasks
+      WHERE (assignee_id = ? OR creator_id = ?)
+        AND (status IS NULL OR status NOT IN ('completed', 'closed'))
+      ORDER BY
+        CASE WHEN plan_end_time IS NULL THEN 1 ELSE 0 END,
+        plan_end_time ASC,
+        created_at DESC
+      LIMIT ${DASHBOARD_TASK_LIMIT}
+    `,
+    [userId, userId]
+  );
+
+  for (const row of rows) {
+    await connection.execute(
+      'INSERT IGNORE INTO user_dashboard_tasks (user_id, task_id) VALUES (?, ?)',
+      [userId, row.id]
+    );
+  }
+}
+
+async function ensureTopItemsTable(connection) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS top_items (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      title VARCHAR(255) NOT NULL,
+      content TEXT,
+      created_by BIGINT,
+      order_index INT DEFAULT 0,
+      status TINYINT DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_status_order (status, order_index)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 }
@@ -836,7 +951,8 @@ app.post('/api/login', async (req, res) => {
         realName: user.real_name,
         phone: user.phone,
         position: user.position,
-        avatarUrl: user.avatar_url
+        avatarUrl: user.avatar_url,
+        createdAt: user.created_at
       }
     });
 
@@ -889,7 +1005,7 @@ app.get('/api/verify', async (req, res) => {
     const connection = await mysql.createConnection(dbConfig);
 
     const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url, status FROM users WHERE id = ? AND status = 1',
+      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at FROM users WHERE id = ? AND status = 1',
       [decoded.userId]
     );
 
@@ -912,7 +1028,8 @@ app.get('/api/verify', async (req, res) => {
         realName: user.real_name,
         phone: user.phone,
         position: user.position,
-        avatarUrl: user.avatar_url
+        avatarUrl: user.avatar_url,
+        createdAt: user.created_at
       }
     });
 
@@ -1949,6 +2066,331 @@ app.get('/api/user/development-suggestions', auth, async (req, res) => {
 
 /**
  * @swagger
+ * /api/top-items:
+ *   get:
+ *     summary: 获取公司十大重要展示项
+ *     tags: [系统]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: 返回的展示项数量，最大 10 条
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ */
+app.get('/api/top-items', auth, async (req, res) => {
+  try {
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, TOP_ITEMS_LIMIT) : TOP_ITEMS_LIMIT;
+
+    const connection = await getConn();
+    await ensureTopItemsTable(connection);
+
+    const [rows] = await connection.execute(`
+        SELECT id, title, content, created_by, order_index, status, created_at, updated_at
+        FROM top_items
+        WHERE status = 1
+        ORDER BY order_index ASC, updated_at DESC
+        LIMIT ${limit}
+      `);
+
+    await connection.end();
+
+    const data = rows.map(row => ({
+      id: row.id,
+      title: row.title || '',
+      content: row.content || '',
+      createdBy: row.created_by,
+      orderIndex: row.order_index ?? 0,
+      status: row.status ?? 0,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    res.json({
+      success: true,
+      message: '获取展示项成功',
+      data,
+    });
+  } catch (e) {
+    console.error('获取展示项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/personal/top-items:
+ *   get:
+ *     summary: 获取个人十大展示项
+ *     tags: [系统]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: 返回的展示项数量，最大 10 条
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ */
+app.get('/api/personal/top-items', auth, async (req, res) => {
+  try {
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, PERSONAL_TOP_ITEMS_LIMIT) : PERSONAL_TOP_ITEMS_LIMIT;
+
+    const connection = await getConn();
+    await ensureUserTopItemsTable(connection);
+
+    const [rows] = await connection.execute(
+      `
+        SELECT id, title, content, order_index, status, created_at, updated_at
+        FROM user_top_items
+        WHERE user_id = ? AND status = 1
+        ORDER BY order_index ASC, updated_at DESC
+        LIMIT ${limit}
+      `,
+      [req.user.id]
+    );
+
+    await connection.end();
+
+    const data = rows.map(row => ({
+      id: row.id,
+      title: row.title || '',
+      content: row.content || '',
+      orderIndex: row.order_index ?? 0,
+      status: row.status ?? 1,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      isPersonal: true,
+    }));
+
+    res.json({
+      success: true,
+      message: '获取个人展示项成功',
+      data,
+    });
+  } catch (e) {
+    console.error('获取个人展示项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/personal/top-items:
+ *   post:
+ *     summary: 新增个人展示项
+ *     tags: [系统]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.post('/api/personal/top-items', auth, async (req, res) => {
+  try {
+    const { title, content = null } = req.body;
+    if (!title || typeof title !== 'string') {
+      return res.status(400).json({ success: false, message: '标题不能为空' });
+    }
+
+    const connection = await getConn();
+    await ensureUserTopItemsTable(connection);
+
+    const [[countRow]] = await connection.execute(
+      'SELECT COUNT(*) AS cnt FROM user_top_items WHERE user_id = ? AND status = 1',
+      [req.user.id]
+    );
+    if ((countRow?.cnt || 0) >= PERSONAL_TOP_ITEMS_LIMIT) {
+      await connection.end();
+      return res.status(400).json({ success: false, message: `最多只能添加 ${PERSONAL_TOP_ITEMS_LIMIT} 条展示项` });
+    }
+
+    const [[orderRow]] = await connection.execute(
+      'SELECT COALESCE(MAX(order_index), 0) + 1 AS nextOrder FROM user_top_items WHERE user_id = ?',
+      [req.user.id]
+    );
+
+    const [result] = await connection.execute(
+      'INSERT INTO user_top_items (user_id, title, content, order_index, status) VALUES (?, ?, ?, ?, 1)',
+      [req.user.id, title.trim(), content, orderRow?.nextOrder ?? 1]
+    );
+
+    const insertedId = result.insertId;
+    const [[row]] = await connection.execute(
+      'SELECT id, title, content, order_index, status, created_at, updated_at FROM user_top_items WHERE id = ? AND user_id = ?',
+      [insertedId, req.user.id]
+    );
+    await connection.end();
+
+    res.json({
+      success: true,
+      message: '创建成功',
+      data: {
+        id: row.id,
+        title: row.title || '',
+        content: row.content || '',
+        orderIndex: row.order_index ?? 0,
+        status: row.status ?? 1,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        isPersonal: true,
+      },
+    });
+  } catch (e) {
+    console.error('创建个人展示项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/personal/top-items/{id}:
+ *   patch:
+ *     summary: 更新个人展示项
+ *     tags: [系统]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.patch('/api/personal/top-items/:id', auth, async (req, res) => {
+  try {
+    const itemId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(itemId)) {
+      return res.status(400).json({ success: false, message: '参数无效' });
+    }
+    const { title, content, status, orderIndex } = req.body;
+    const fields = [];
+    const params = [];
+
+    if (title !== undefined) {
+      if (!title || typeof title !== 'string') {
+        return res.status(400).json({ success: false, message: '标题不能为空' });
+      }
+      fields.push('title = ?');
+      params.push(title.trim());
+    }
+    if (content !== undefined) {
+      fields.push('content = ?');
+      params.push(content);
+    }
+    if (orderIndex !== undefined) {
+      const orderValue = parseInt(orderIndex, 10);
+      if (!Number.isFinite(orderValue) || orderValue < 0) {
+        return res.status(400).json({ success: false, message: '排序值无效' });
+      }
+      fields.push('order_index = ?');
+      params.push(orderValue);
+    }
+    if (status !== undefined) {
+      const statusValue = parseInt(status, 10);
+      if (!(statusValue === 0 || statusValue === 1)) {
+        return res.status(400).json({ success: false, message: '状态无效' });
+      }
+      if (statusValue === 1) {
+        const connection = await getConn();
+        const [[countRow]] = await connection.execute(
+          'SELECT COUNT(*) AS cnt FROM user_top_items WHERE user_id = ? AND status = 1 AND id != ?',
+          [req.user.id, itemId]
+        );
+        if ((countRow?.cnt || 0) >= PERSONAL_TOP_ITEMS_LIMIT) {
+          await connection.end();
+          return res.status(400).json({ success: false, message: `最多只能展示 ${PERSONAL_TOP_ITEMS_LIMIT} 条` });
+        }
+        await connection.end();
+      }
+      fields.push('status = ?');
+      params.push(statusValue);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ success: false, message: '没有需要更新的字段' });
+    }
+
+    const connection = await getConn();
+    await ensureUserTopItemsTable(connection);
+
+    params.push(itemId, req.user.id);
+    const [result] = await connection.execute(
+      `UPDATE user_top_items SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?`,
+      params
+    );
+
+    if (result.affectedRows === 0) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '记录不存在' });
+    }
+
+    const [[row]] = await connection.execute(
+      'SELECT id, title, content, order_index, status, created_at, updated_at FROM user_top_items WHERE id = ? AND user_id = ?',
+      [itemId, req.user.id]
+    );
+    await connection.end();
+
+    res.json({
+      success: true,
+      message: '更新成功',
+      data: {
+        id: row.id,
+        title: row.title || '',
+        content: row.content || '',
+        orderIndex: row.order_index ?? 0,
+        status: row.status ?? 1,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        isPersonal: true,
+      },
+    });
+  } catch (e) {
+    console.error('更新个人展示项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/personal/top-items/{id}:
+ *   delete:
+ *     summary: 删除个人展示项
+ *     tags: [系统]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.delete('/api/personal/top-items/:id', auth, async (req, res) => {
+  try {
+    const itemId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(itemId)) {
+      return res.status(400).json({ success: false, message: '参数无效' });
+    }
+
+    const connection = await getConn();
+    await ensureUserTopItemsTable(connection);
+
+    const [result] = await connection.execute(
+      'DELETE FROM user_top_items WHERE id = ? AND user_id = ?',
+      [itemId, req.user.id]
+    );
+    await connection.end();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: '记录不存在' });
+    }
+
+    res.json({ success: true, message: '删除成功' });
+  } catch (e) {
+    console.error('删除个人展示项失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
  * /api/dashboard/logs:
  *   get:
  *     summary: 获取仪表盘日志列表
@@ -1969,57 +2411,32 @@ app.get('/api/user/development-suggestions', auth, async (req, res) => {
 app.get('/api/dashboard/logs', auth, async (req, res) => {
   try {
     const limitRaw = parseInt(req.query.limit, 10);
-    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 12) : DASHBOARD_LOG_LIMIT;
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, DASHBOARD_LOG_LIMIT) : DASHBOARD_LOG_LIMIT;
 
     const connection = await getConn();
     await ensureDashboardLogsTable(connection);
+    await seedDashboardLogs(connection, req.user.id);
 
-    const [pinnedRows] = await connection.execute(
+    const [rows] = await connection.execute(
       `
         SELECT l.id, l.title, l.content, l.log_status, l.time_from, l.time_to, l.priority,
-               l.created_at, l.updated_at, udl.created_at AS pinned_at, 1 AS is_pinned
+               l.created_at, l.updated_at, udl.created_at AS pinned_at
         FROM user_dashboard_logs udl
         JOIN logs l ON udl.log_id = l.id
-        WHERE udl.user_id = ? AND l.author_user_id = ?
-        ORDER BY udl.created_at ASC
+        WHERE udl.user_id = ?
+          AND l.author_user_id = ?
+          AND (l.log_status IS NULL OR l.log_status != 'completed')
+        ORDER BY
+          CASE WHEN l.time_to IS NULL THEN 1 ELSE 0 END,
+          l.time_to ASC,
+          l.created_at DESC
         LIMIT ${limit}
       `,
       [req.user.id, req.user.id]
     );
 
-    const pinnedIds = pinnedRows.map(row => row.id);
-    let additionalRows = [];
-    const remaining = limit - pinnedRows.length;
-
-    if (remaining > 0) {
-      let sql = `
-        SELECT l.id, l.title, l.content, l.log_status, l.time_from, l.time_to, l.priority,
-               l.created_at, l.updated_at, NULL AS pinned_at, 0 AS is_pinned
-        FROM logs l
-        WHERE l.author_user_id = ?
-      `;
-      const params = [req.user.id];
-
-      if (pinnedIds.length > 0) {
-        sql += ` AND l.id NOT IN (${pinnedIds.map(() => '?').join(',')})`;
-        params.push(...pinnedIds);
-      }
-
-      sql += `
-        ORDER BY
-          CASE WHEN l.time_to IS NULL THEN 1 ELSE 0 END,
-          l.time_to ASC,
-          l.created_at DESC
-        LIMIT ${remaining}
-      `;
-
-      const [autoRows] = await connection.execute(sql, params);
-      additionalRows = autoRows;
-    }
-
     await connection.end();
 
-    const rows = [...pinnedRows, ...additionalRows];
     const data = rows.map(row => ({
       id: row.id,
       title: row.title || '',
@@ -2030,7 +2447,7 @@ app.get('/api/dashboard/logs', auth, async (req, res) => {
       priority: row.priority,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      isPinned: row.is_pinned === 1,
+      isPinned: true,
       pinnedAt: row.pinned_at
     }));
 
@@ -2101,6 +2518,191 @@ app.post('/api/dashboard/logs', auth, async (req, res) => {
     res.json({ success: true, message: '添加成功' });
   } catch (e) {
     console.error('固定仪表盘日志失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/dashboard/tasks:
+ *   get:
+ *     summary: 获取仪表盘任务列表
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: 返回的任务数量
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ */
+app.get('/api/dashboard/tasks', auth, async (req, res) => {
+  try {
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, DASHBOARD_TASK_LIMIT) : DASHBOARD_TASK_LIMIT;
+
+    const connection = await getConn();
+    await ensureDashboardTasksTable(connection);
+    await seedDashboardTasks(connection, req.user.id);
+
+    const [rows] = await connection.execute(
+      `
+        SELECT t.id, t.task_name AS name, t.description, t.priority, t.status, t.progress,
+               t.plan_start_time, t.plan_end_time AS due_time, t.created_at, t.updated_at,
+               t.assignee_id AS owner_user_id, t.creator_id AS creator_user_id,
+               udt.created_at AS pinned_at
+        FROM user_dashboard_tasks udt
+        JOIN tasks t ON udt.task_id = t.id
+        WHERE udt.user_id = ?
+          AND (t.assignee_id = ? OR t.creator_id = ?)
+          AND (t.status IS NULL OR t.status NOT IN ('completed', 'closed'))
+        ORDER BY
+          CASE WHEN t.plan_end_time IS NULL THEN 1 ELSE 0 END,
+          t.plan_end_time ASC,
+          t.created_at DESC
+        LIMIT ${limit}
+      `,
+      [req.user.id, req.user.id, req.user.id]
+    );
+
+    await connection.end();
+
+    const data = rows.map(row => ({
+      id: row.id,
+      name: row.name || '',
+      description: row.description || '',
+      status: row.status || 'not_started',
+      priority: row.priority || 'low',
+      progress: row.progress ?? 0,
+      planStartTime: row.plan_start_time,
+      dueTime: row.due_time,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      ownerUserId: row.owner_user_id,
+      creatorUserId: row.creator_user_id,
+      isPinned: true,
+      pinnedAt: row.pinned_at,
+    }));
+
+    res.json({
+      success: true,
+      message: '获取仪表盘任务成功',
+      data,
+    });
+  } catch (e) {
+    console.error('获取仪表盘任务失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/dashboard/tasks:
+ *   post:
+ *     summary: 添加仪表盘任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.post('/api/dashboard/tasks', auth, async (req, res) => {
+  try {
+    const { taskId } = req.body;
+    const taskIdNum = parseInt(taskId, 10);
+    if (!Number.isFinite(taskIdNum)) {
+      return res.status(400).json({ success: false, message: 'taskId 参数无效' });
+    }
+
+    const connection = await getConn();
+    await ensureDashboardTasksTable(connection);
+
+    const [[taskRow]] = await connection.execute(
+      `
+        SELECT id, assignee_id, creator_id, status
+        FROM tasks
+        WHERE id = ? AND (assignee_id = ? OR creator_id = ?)
+        LIMIT 1
+      `,
+      [taskIdNum, req.user.id, req.user.id]
+    );
+
+    if (!taskRow) {
+      await connection.end();
+      return res.status(404).json({ success: false, message: '任务不存在或不属于当前用户' });
+    }
+
+    if (taskRow.status === 'completed') {
+      await connection.end();
+      return res.status(400).json({ success: false, message: '已完成的任务无需展示' });
+    }
+
+    const [[countRow]] = await connection.execute(
+      'SELECT COUNT(*) AS cnt FROM user_dashboard_tasks WHERE user_id = ?',
+      [req.user.id]
+    );
+    if (countRow.cnt >= DASHBOARD_TASK_LIMIT) {
+      await connection.end();
+      return res.status(400).json({ success: false, message: `最多只能添加 ${DASHBOARD_TASK_LIMIT} 条任务` });
+    }
+
+    const [[existsRow]] = await connection.execute(
+      'SELECT 1 FROM user_dashboard_tasks WHERE user_id = ? AND task_id = ? LIMIT 1',
+      [req.user.id, taskIdNum]
+    );
+    if (existsRow) {
+      await connection.end();
+      return res.status(409).json({ success: false, message: '该任务已在展示列表中' });
+    }
+
+    await connection.execute(
+      'INSERT INTO user_dashboard_tasks (user_id, task_id) VALUES (?, ?)',
+      [req.user.id, taskIdNum]
+    );
+    await connection.end();
+
+    res.json({ success: true, message: '任务添加成功' });
+  } catch (e) {
+    console.error('添加仪表盘任务失败:', e);
+    res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/dashboard/tasks/{taskId}:
+ *   delete:
+ *     summary: 移除仪表盘任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ */
+app.delete('/api/dashboard/tasks/:taskId', auth, async (req, res) => {
+  try {
+    const taskIdNum = parseInt(req.params.taskId, 10);
+    if (!Number.isFinite(taskIdNum)) {
+      return res.status(400).json({ success: false, message: 'taskId 参数无效' });
+    }
+
+    const connection = await getConn();
+    await ensureDashboardTasksTable(connection);
+
+    const [result] = await connection.execute(
+      'DELETE FROM user_dashboard_tasks WHERE user_id = ? AND task_id = ?',
+      [req.user.id, taskIdNum]
+    );
+    await connection.end();
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: '未找到对应的任务' });
+    }
+
+    res.json({ success: true, message: '移除成功' });
+  } catch (e) {
+    console.error('移除仪表盘任务失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
   }
 });

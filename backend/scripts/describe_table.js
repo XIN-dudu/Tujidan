@@ -7,9 +7,9 @@ if (!table) {
 
 (async () => {
   const conn = await mysql.createConnection({
-    host: '117.72.181.99',
-    user: 'tu',
-    password: 'tu123',
+    host: '127.0.0.1',
+    user: 'root',
+    password: '123456',
     database: 'tujidan',
     port: 3306,
   });

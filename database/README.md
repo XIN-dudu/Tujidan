@@ -27,8 +27,8 @@ node run_migration.js rollback_image_tables.sql
 ### 方法 2：使用 MySQL 命令行
 
 ```bash
-# 连接到数据库
-mysql -h 117.72.181.99 -u tu -p tujidan
+# 连接到本地数据库
+mysql -h 127.0.0.1 -u root -p tujidan
 
 # 执行 SQL 文件
 source database/migration_add_image_tables.sql;
@@ -41,7 +41,7 @@ source D:/GitHub/Tujidan/database/migration_add_image_tables.sql;
 
 #### MySQL Workbench
 1. 打开 MySQL Workbench
-2. 连接到数据库（117.72.181.99）
+2. 连接到数据库（127.0.0.1）
 3. 打开 SQL 文件（File → Open SQL Script）
 4. 选择要执行的 SQL 文件
 5. 点击执行按钮（⚡ Execute）
