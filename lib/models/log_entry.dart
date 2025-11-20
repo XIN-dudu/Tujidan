@@ -1,5 +1,33 @@
 import 'task.dart';
 
+class LogLocation {
+  final double latitude;
+  final double longitude;
+  final String? address;
+
+  LogLocation({
+    required this.latitude,
+    required this.longitude,
+    this.address,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'latitude': latitude,
+      'longitude': longitude,
+      'address': address,
+    };
+  }
+
+  @override
+  String toString() {
+    if (address != null && address!.isNotEmpty) {
+      return address!;
+    }
+    return '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
+  }
+}
+
 class LogEntry {
   final String id;
   final String title; // 新增：日志标题
@@ -15,6 +43,7 @@ class LogEntry {
   final String logStatus; // 主要状态字段：pending, completed, cancelled
   final bool isCompleted; // 新增：完成状态（从logStatus派生）
   final List<String> images;
+  final LogLocation? location; // 地理位置信息
 
   LogEntry({
     required this.id,
@@ -31,6 +60,7 @@ class LogEntry {
     this.logStatus = 'pending',
     bool? isCompleted,
     List<String>? images,
+    this.location,
   }) : images = images ?? const [],
        isCompleted = isCompleted ?? (logStatus == 'completed');
 
@@ -90,6 +120,7 @@ class LogEntry {
           : (json['end_time'] != null ? parseTime(json['end_time']) : null),
       logStatus: _normalizeLogStatus(json['log_status'] ?? json['logStatus']),
       images: _parseImages(json['images']),
+      location: _parseLocation(json['location']),
     );
   }
 
@@ -110,6 +141,22 @@ class LogEntry {
     return const [];
   }
 
+  static LogLocation? _parseLocation(dynamic source) {
+    if (source == null) return null;
+    if (source is Map<String, dynamic>) {
+      final lat = source['latitude'];
+      final lng = source['longitude'];
+      if (lat != null && lng != null) {
+        return LogLocation(
+          latitude: (lat is num) ? lat.toDouble() : double.tryParse(lat.toString()) ?? 0.0,
+          longitude: (lng is num) ? lng.toDouble() : double.tryParse(lng.toString()) ?? 0.0,
+          address: source['address']?.toString(),
+        );
+      }
+    }
+    return null;
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -126,6 +173,7 @@ class LogEntry {
       'log_status': logStatus,
       'isCompleted': isCompleted,
       'images': images,
+      'location': location?.toJson(),
     };
   }
 
@@ -144,6 +192,7 @@ class LogEntry {
     String? logStatus,
     bool? isCompleted,
     List<String>? images,
+    LogLocation? location,
   }) {
     final newLogStatus = logStatus ?? this.logStatus;
     return LogEntry(
@@ -161,6 +210,7 @@ class LogEntry {
       logStatus: newLogStatus,
       isCompleted: isCompleted,
       images: images ?? this.images,
+      location: location ?? this.location,
     );
   }
 
@@ -190,7 +240,6 @@ class LogEntry {
         return 'completed';
       case 'cancelled':
       case 'canceled':
-      case 'cancelled':
         return 'cancelled';
       case 'pending':
       case 'in_progress':

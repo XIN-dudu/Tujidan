@@ -14,6 +14,7 @@ import '../models/task.dart';
 import '../models/api_response.dart';
 import '../services/log_service.dart';
 import '../services/task_service.dart';
+import '../services/location_service.dart';
 import '../widgets/task_selector.dart';
 import '../widgets/priority_selector.dart';
 
@@ -50,6 +51,9 @@ class _LogEditPageState extends State<LogEditPage> {
   String? _selectedType; // work/study/life/other
   final List<String> _types = const ['work', 'study', 'life', 'other'];
   List<String> _imageDataUris = [];
+  Map<String, dynamic>? _selectedLocation; // 存储选择的地理位置
+  final LocationService _locationService = LocationService();
+  bool _isLoadingLocation = false;
 
   @override
   void initState() {
@@ -78,6 +82,15 @@ class _LogEditPageState extends State<LogEditPage> {
     _endTime = log.endTime;
     _logStatus = log.logStatus;
     _imageDataUris = List<String>.from(log.images);
+    
+    // 加载地理位置信息
+    if (log.location != null) {
+      _selectedLocation = {
+        'latitude': log.location!.latitude,
+        'longitude': log.location!.longitude,
+        'address': log.location!.address,
+      };
+    }
 
     // 如果有关联任务，需要获取任务详情
     if (log.taskId != null) {
@@ -112,6 +125,69 @@ class _LogEditPageState extends State<LogEditPage> {
     super.dispose();
   }
 
+  /// 获取当前地理位置
+  Future<void> _getCurrentLocation() async {
+    setState(() => _isLoadingLocation = true);
+
+    try {
+      final location = await _locationService.getCurrentLocation();
+      
+      if (location != null) {
+        setState(() {
+          _selectedLocation = location;
+          _isLoadingLocation = false;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('已获取位置: ${location['address']}'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        setState(() => _isLoadingLocation = false);
+        
+        if (mounted) {
+          // 显示权限提示对话框
+          final shouldOpenSettings = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('无法获取位置'),
+              content: const Text('请检查是否已授予位置权限，并确保已开启位置服务。'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('打开设置'),
+                ),
+              ],
+            ),
+          );
+          
+          if (shouldOpenSettings == true) {
+            await _locationService.openAppSettings();
+          }
+        }
+      }
+    } catch (e) {
+      setState(() => _isLoadingLocation = false);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('获取位置失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _saveLog() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -134,6 +210,13 @@ class _LogEditPageState extends State<LogEditPage> {
         endTime: _endTime,
         logStatus: _logStatus,
         images: List<String>.from(_imageDataUris),
+        location: _selectedLocation != null
+            ? LogLocation(
+                latitude: _selectedLocation!['latitude'],
+                longitude: _selectedLocation!['longitude'],
+                address: _selectedLocation!['address'],
+              )
+            : null,
       );
 
       ApiResponse<LogEntry> response;
@@ -579,15 +662,17 @@ class _LogEditPageState extends State<LogEditPage> {
                         ),
                         trailing: const Icon(Icons.schedule),
                         onTap: () async {
+                          final navigator = context;
                           final date = await showDatePicker(
-                            context: context,
+                            context: navigator,
                             initialDate: _startTime ?? DateTime.now(),
                             firstDate: DateTime(2020),
                             lastDate: DateTime(2035),
                           );
                           if (date != null) {
+                            if (!mounted) return;
                             final time = await showTimePicker(
-                              context: context,
+                              context: navigator,
                               initialTime: TimeOfDay.fromDateTime(
                                 _startTime ?? DateTime.now(),
                               ),
@@ -620,16 +705,18 @@ class _LogEditPageState extends State<LogEditPage> {
                         ),
                         trailing: const Icon(Icons.event),
                         onTap: () async {
+                          final navigator = context;
                           final date = await showDatePicker(
-                            context: context,
+                            context: navigator,
                             initialDate:
                                 _endTime ?? (_startTime ?? DateTime.now()),
                             firstDate: DateTime(2020),
                             lastDate: DateTime(2035),
                           );
                           if (date != null) {
+                            if (!mounted) return;
                             final time = await showTimePicker(
-                              context: context,
+                              context: navigator,
                               initialTime: TimeOfDay.fromDateTime(
                                 _endTime ?? (_startTime ?? DateTime.now()),
                               ),
@@ -651,6 +738,93 @@ class _LogEditPageState extends State<LogEditPage> {
                             }
                           }
                         },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 地理位置选择
+                      Card(
+                        elevation: 2,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.location_on, size: 20),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    '位置',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (_isLoadingLocation)
+                                    const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  else
+                                    TextButton.icon(
+                                      icon: const Icon(Icons.my_location, size: 18),
+                                      label: const Text('获取当前位置'),
+                                      onPressed: _getCurrentLocation,
+                                    ),
+                                ],
+                              ),
+                              if (_selectedLocation != null) ...[
+                                const Divider(),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue[50],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.blue[200]!),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              _selectedLocation!['address'] ?? '未知地址',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w500,
+                                                fontSize: 15,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '${(_selectedLocation!['latitude'] as double).toStringAsFixed(6)}, '
+                                              '${(_selectedLocation!['longitude'] as double).toStringAsFixed(6)}',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey[600],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.clear, size: 20),
+                                        onPressed: () {
+                                          setState(() => _selectedLocation = null);
+                                        },
+                                        tooltip: '清除位置',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 16),
 

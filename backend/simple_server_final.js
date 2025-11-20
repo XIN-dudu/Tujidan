@@ -961,6 +961,135 @@ app.get('/api/health', (req, res) => {
 
 /**
  * @swagger
+ * /api/geocode:
+ *   get:
+ *     summary: 地理位置逆编码（将经纬度转换为地址）
+ *     tags: [工具]
+ *     parameters:
+ *       - in: query
+ *         name: lat
+ *         required: true
+ *         schema:
+ *           type: number
+ *         description: 纬度
+ *       - in: query
+ *         name: lon
+ *         required: true
+ *         schema:
+ *           type: number
+ *         description: 经度
+ *     responses:
+ *       200:
+ *         description: 地址解析成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 address:
+ *                   type: string
+ *                   example: 北京市朝阳区建国路88号
+ *       400:
+ *         description: 参数错误
+ *       500:
+ *         description: 地理编码服务失败
+ */
+// 地理位置逆编码接口（无需认证，供客户端调用）
+app.get('/api/geocode', async (req, res) => {
+  try {
+    const { lat, lon } = req.query;
+    
+    // 参数验证
+    if (!lat || !lon) {
+      return res.status(400).json({
+        success: false,
+        error: '缺少必要参数 lat 或 lon'
+      });
+    }
+    
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lon);
+    
+    if (isNaN(latitude) || isNaN(longitude)) {
+      return res.status(400).json({
+        success: false,
+        error: '经纬度参数格式不正确'
+      });
+    }
+    
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return res.status(400).json({
+        success: false,
+        error: '经纬度参数超出有效范围'
+      });
+    }
+    
+    // 调用 Nominatim 逆地理编码服务
+    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=zh-CN`;
+    
+    const https = require('https');
+    const response = await new Promise((resolve, reject) => {
+      https.get(nominatimUrl, {
+        headers: {
+          'User-Agent': 'Tujidan/1.0 (Log Management App)'
+        }
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(new Error('解析 Nominatim 响应失败'));
+          }
+        });
+      }).on('error', reject);
+    });
+    
+    // 解析地址
+    if (response && response.display_name) {
+      return res.json({
+        success: true,
+        address: response.display_name
+      });
+    } else if (response && response.address) {
+      // 尝试从 address 字段构建更友好的地址
+      const addr = response.address;
+      const parts = [
+        addr.country,
+        addr.state || addr.province,
+        addr.city || addr.county,
+        addr.suburb || addr.town || addr.village,
+        addr.road,
+        addr.house_number
+      ].filter(Boolean);
+      
+      return res.json({
+        success: true,
+        address: parts.join('')
+      });
+    } else {
+      // 如果没有获取到地址信息，返回失败
+      return res.status(500).json({
+        success: false,
+        error: '无法获取地址信息'
+      });
+    }
+    
+  } catch (error) {
+    console.error('地理编码失败:', error);
+    return res.status(500).json({
+      success: false,
+      error: '地理编码服务暂时不可用'
+    });
+  }
+});
+
+/**
+ * @swagger
  * /api/user/avatar:
  *   post:
  *     summary: 上传头像
@@ -3063,6 +3192,22 @@ app.post('/api/tasks/:id/cancel-accept', auth, async (req, res) => {
  *                 type: string
  *                 enum: [pending, completed, cancelled]
  *                 default: pending
+ *               location:
+ *                 type: object
+ *                 description: 地理位置信息（可选）
+ *                 properties:
+ *                   latitude:
+ *                     type: number
+ *                     description: 纬度
+ *                     example: 39.9042
+ *                   longitude:
+ *                     type: number
+ *                     description: 经度
+ *                     example: 116.4074
+ *                   address:
+ *                     type: string
+ *                     description: 地址描述
+ *                     example: 北京市东城区
  *     responses:
  *       201:
  *         description: 创建成功
@@ -3085,6 +3230,7 @@ app.post('/api/logs', auth, async (req, res) => {
       syncTaskProgress = false,
       logStatus = 'pending',
       images: imageDataUris = [],
+      location = null,
     } = req.body;
     if (!content || typeof content !== 'string') {
       return res.status(400).json({ success: false, message: '日志内容不能为空' });
@@ -3111,9 +3257,14 @@ app.post('/api/logs', auth, async (req, res) => {
     // log_type 不能为 null，如果没有提供则使用默认值 'work'
     const logType = type || 'work';
 
+    // 提取地理位置信息
+    const latitude = location?.latitude || null;
+    const longitude = location?.longitude || null;
+    const address = location?.address || null;
+
     const [lRes] = await connection.execute(
-      'INSERT INTO logs (author_user_id, title, content, log_type, priority, progress, time_from, time_to, task_id, log_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [req.user.id, title, content, logType, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'pending']
+      'INSERT INTO logs (author_user_id, title, content, log_type, priority, progress, time_from, time_to, task_id, log_status, latitude, longitude, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [req.user.id, title, content, logType, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'pending', latitude, longitude, address]
     );
 
     // ！！！！！！！！！！！！！！！！！！！！！！暂时关闭关键词提取功能！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！
@@ -3282,6 +3433,11 @@ app.get('/api/logs', auth, async (req, res) => {
         taskId: row.task_id,
         logStatus: row.log_status, // 关键修复：返回日志状态
         images: row.images || [],
+        location: row.latitude && row.longitude ? {
+          latitude: row.latitude,
+          longitude: row.longitude,
+          address: row.address
+        } : null,
       })),
       code: 200,
     });
@@ -3327,6 +3483,16 @@ app.get('/api/logs/:id', auth, async (req, res) => {
       return res.status(404).json({ success: false, message: '日志不存在' });
     }
     rows[0].images = await getImagesForSingle(connection, 'log_images', 'log_id', rows[0].id);
+    
+    // 添加地理位置信息
+    if (rows[0].latitude && rows[0].longitude) {
+      rows[0].location = {
+        latitude: rows[0].latitude,
+        longitude: rows[0].longitude,
+        address: rows[0].address
+      };
+    }
+    
     await connection.end();
     res.json({ success: true, log: rows[0] });
   } catch (e) {
@@ -3546,7 +3712,7 @@ app.get('/api/logs/keywords', auth, async (req, res) => {
 app.patch('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false, logStatus, images: imageDataUris } = req.body;
+    const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false, logStatus, images: imageDataUris, location } = req.body;
     
     const connection = await getConn();
     const [exists] = await connection.execute('SELECT id, task_id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
@@ -3601,6 +3767,22 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
       if (validStatus.includes(newStatus)) {
         updates.push('log_status = ?');
         params.push(newStatus);
+      }
+    }
+    
+    // 更新地理位置信息
+    if (location !== undefined) {
+      if (location && location.latitude !== undefined) {
+        updates.push('latitude = ?');
+        params.push(location.latitude);
+      }
+      if (location && location.longitude !== undefined) {
+        updates.push('longitude = ?');
+        params.push(location.longitude);
+      }
+      if (location && location.address !== undefined) {
+        updates.push('address = ?');
+        params.push(location.address);
       }
     }
     

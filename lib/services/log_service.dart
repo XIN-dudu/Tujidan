@@ -68,6 +68,12 @@ class LogService {
           : null,
       'logStatus': log.logStatus,
       'images': log.images,
+      if (log.location != null)
+        'location': {
+          'latitude': log.location!.latitude,
+          'longitude': log.location!.longitude,
+          'address': log.location!.address,
+        },
     };
     return await ApiClient.post<LogEntry>(
       '/logs',
@@ -90,6 +96,12 @@ class LogService {
           : null,
       'logStatus': log.logStatus,
       'images': log.images,
+      if (log.location != null)
+        'location': {
+          'latitude': log.location!.latitude,
+          'longitude': log.location!.longitude,
+          'address': log.location!.address,
+        },
     };
     return await ApiClient.patch<LogEntry>(
       '/logs/${log.id}',
