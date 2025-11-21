@@ -1,12 +1,12 @@
 allprojects {
     repositories {
-        // 恢复官方仓库，确保能获取到所有依赖
-        google()
-        mavenCentral()
-        // 保留阿里云镜像作为备用和加速
+        // 优先使用阿里云镜像加速
         maven { url = uri("https://maven.aliyun.com/repository/google") }
         maven { url = uri("https://maven.aliyun.com/repository/public") }
         maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        // 备用官方源
+        google()
+        mavenCentral()
     }
 }
 

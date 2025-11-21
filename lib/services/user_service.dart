@@ -3,10 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/api_response.dart';
 
 class UserService {
   static const String _tokenKey = 'auth_token';
-  static const String _baseUrl = 'http://localhost:3001/api';
+  static const String _baseUrl = 'http://127.0.0.1:3001/api';
   
   // 头像缓存：存储解码后的 ImageProvider 和用户ID
   static ImageProvider? _cachedAvatarImage;
@@ -239,6 +240,72 @@ class UserService {
     } catch (e) {
       print('上传头像失败: $e');
       return false;
+    }
+  }
+
+  // 更新用户信息
+  Future<ApiResponse<Map<String, dynamic>>> updateUserProfile({
+    String? username,
+    String? password,
+    String? email,
+    String? phone,
+  }) async {
+    try {
+      final String? token = await _getToken();
+      if (token == null) {
+        return ApiResponse(
+          success: false,
+          message: '未登录',
+        );
+      }
+
+      final body = <String, dynamic>{};
+      if (username != null) body['username'] = username;
+      if (password != null && password.isNotEmpty) body['password'] = password;
+      if (email != null) body['email'] = email;
+      if (phone != null) body['phone'] = phone;
+
+      final response = await http.put(
+        Uri.parse('$_baseUrl/user/profile'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: json.encode(body),
+      ).timeout(const Duration(seconds: 30));
+
+      final data = json.decode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        final user = data['user'] as Map<String, dynamic>;
+        // 统一转换为下划线格式
+        final userInfo = {
+          'id': user['id'],
+          'username': user['username'],
+          'email': user['email'],
+          'real_name': user['realName'],
+          'phone': user['phone'],
+          'position': user['position'],
+          'avatar_url': user['avatarUrl'],
+          'created_at': user['createdAt'],
+        };
+        return ApiResponse(
+          success: true,
+          message: data['message'] ?? '更新成功',
+          data: userInfo,
+        );
+      } else {
+        return ApiResponse(
+          success: false,
+          message: data['message'] ?? '更新失败',
+        );
+      }
+    } catch (e) {
+      print('更新用户信息失败: $e');
+      return ApiResponse(
+        success: false,
+        message: '网络错误: $e',
+      );
     }
   }
 }

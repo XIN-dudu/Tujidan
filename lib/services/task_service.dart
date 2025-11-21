@@ -35,10 +35,18 @@ class TaskService {
   }
 
   // 创建任务
-  static Future<ApiResponse<Task>> createTask(Task task) async {
+  static Future<ApiResponse<Task>> createTask(
+    Task task, {
+    String? ownerUserId,
+  }) async {
+    final body = Map<String, dynamic>.from(task.toJson());
+    final override = ownerUserId?.trim();
+    if (override != null && override.isNotEmpty) {
+      body['ownerUserId'] = int.tryParse(override) ?? override;
+    }
     return await ApiClient.post<Task>(
       '/tasks',
-      body: task.toJson(),
+      body: body,
       fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
     );
   }
@@ -52,8 +60,17 @@ class TaskService {
     if (!response.success || response.data == null) {
       return response;
     }
-    // 创建成功后立即分配
-    return await publishTask(response.data!.id, ownerUserId: assigneeId);
+    final targetId = assigneeId?.trim();
+    if (targetId == null || targetId.isEmpty) {
+      return response;
+    }
+    final createdTask = response.data!;
+    if (createdTask.assigneeId.isNotEmpty && createdTask.assigneeId == targetId) {
+      // 已分配到目标负责人，无需再调用 publish（避免被当作撤回）。
+      return response;
+    }
+    final publishResponse = await publishTask(createdTask.id, ownerUserId: targetId);
+    return publishResponse;
   }
 
   // 更新任务

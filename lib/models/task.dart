@@ -2,7 +2,8 @@ class Task {
   final String id;
   final String name;
   final String description;
-  final String assignee;
+  final String assignee; // 展示名称
+  final String assigneeId; // 负责人ID
   final String creator; // 创建者ID
   final DateTime deadline;
   final DateTime? plannedStart; // 计划开始时间
@@ -18,6 +19,7 @@ class Task {
     required this.name,
     required this.description,
     required this.assignee,
+    this.assigneeId = '',
     required this.creator,
     required this.deadline,
     this.plannedStart,
@@ -30,14 +32,17 @@ class Task {
   }) : images = images ?? const [];
 
   factory Task.fromJson(Map<String, dynamic> json) {
+    final rawName = (json['assignee'] ?? json['owner_user_name'] ?? '').toString();
+    final rawId = (json['owner_user_id'] ?? json['assignee_id'])?.toString() ?? '';
+    final normalizedName = rawName.trim().isNotEmpty ? rawName.toString() : '';
+    final normalizedId = rawId.trim();
+
     return Task(
       id: (json['id'] ?? '').toString(),
       name: json['name'] ?? '',
       description: json['description'] ?? '',
-      assignee:
-          json['assignee']?.toString() ??
-          json['owner_user_id']?.toString() ??
-          '',
+      assignee: normalizedName.isNotEmpty ? normalizedName : normalizedId,
+      assigneeId: normalizedId,
       creator:
           json['creator']?.toString() ??
           json['creator_user_id']?.toString() ??
@@ -114,11 +119,15 @@ class Task {
   }
 
   Map<String, dynamic> toJson() {
+    final ownerSource =
+        assigneeId.isNotEmpty ? assigneeId : assignee;
+    final ownerUserId = int.tryParse(ownerSource);
+
     return {
       'id': id,
       'name': name,
       'description': description,
-      'ownerUserId': assignee.isEmpty ? null : int.tryParse(assignee),
+      'ownerUserId': ownerUserId,
       'dueTime': deadline.toIso8601String(),
       'planStartTime': plannedStart?.toIso8601String(),
       'priority': priority.name,
@@ -136,6 +145,7 @@ class Task {
     String? name,
     String? description,
     String? assignee,
+    String? assigneeId,
     String? creator,
     DateTime? deadline,
     DateTime? plannedStart,
@@ -151,6 +161,7 @@ class Task {
       name: name ?? this.name,
       description: description ?? this.description,
       assignee: assignee ?? this.assignee,
+      assigneeId: assigneeId ?? this.assigneeId,
       creator: creator ?? this.creator,
       deadline: deadline ?? this.deadline,
       plannedStart: plannedStart ?? this.plannedStart,

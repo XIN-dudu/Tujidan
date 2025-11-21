@@ -1,15 +1,19 @@
+import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:test_flutter/auth_service.dart';
 import 'package:test_flutter/models/api_response.dart';
 import 'package:test_flutter/login_page.dart';
 import 'package:test_flutter/models/notification_item.dart';
+import 'package:test_flutter/pages/log_edit_page.dart';
 import 'package:test_flutter/pages/log_list_page.dart';
 import 'package:test_flutter/pages/log_view_page.dart';
-import 'package:test_flutter/pages/user_profile_page.dart';
 import 'package:test_flutter/pages/task_list_page.dart';
+import 'package:test_flutter/pages/task_view_page.dart';
+import 'package:test_flutter/pages/user_profile_page.dart';
 import 'package:test_flutter/services/dashboard_service.dart';
 import 'package:test_flutter/models/dashboard_log_item.dart';
 import 'package:test_flutter/models/top_item.dart';
@@ -37,6 +41,16 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: '潘多拉',
       theme: AppTheme.getTheme(),
+      locale: const Locale('zh', 'CN'),
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: _RootDecider(),
     );
   }
@@ -634,6 +648,64 @@ class _QuadrantPageState extends State<QuadrantPage> {
     );
   }
 
+  Future<void> _openDashboardTaskDetails(DashboardTaskItem taskItem) async {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    late ApiResponse<Task> response;
+    try {
+      response = await TaskService.getTaskById(taskItem.id);
+    } finally {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
+    if (!mounted) return;
+    if (response.success && response.data != null) {
+      final result = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(builder: (_) => TaskViewPage(task: response.data!)),
+      );
+      if (result == true) {
+        await _loadCompanyTasks();
+      }
+    } else {
+      final msg = response.message.isNotEmpty ? response.message : '加载任务详情失败';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _openDashboardLogDetails(DashboardLogItem logItem) async {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    late ApiResponse<LogEntry> response;
+    try {
+      response = await LogService.getLogById(logItem.id);
+    } finally {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+    }
+    if (!mounted) return;
+    if (response.success && response.data != null) {
+      final result = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(builder: (_) => LogEditPage(logEntry: response.data!)),
+      );
+      if (result == true) {
+        await _loadDashboardLogs(showLoading: false);
+      }
+    } else {
+      final msg = response.message.isNotEmpty ? response.message : '加载日志详情失败';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
   void _showNotificationsPanel(BuildContext context) {
     setState(() { _hasUnread = false; });
     showModalBottomSheet(
@@ -831,33 +903,40 @@ class _QuadrantPageState extends State<QuadrantPage> {
         ],
       ),
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            // 限制最大宽度和高度，保持四宫格比例
-            constraints: const BoxConstraints(
-              maxWidth: 600,  // 最大宽度
-              maxHeight: 650, // 最大高度（稍大一点以适应间距）
-            ),
-            child: AspectRatio(
-              // 保持接近正方形的比例
-              aspectRatio: 1.0,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const horizontalPadding = 16.0;
+            const verticalPadding = 16.0;
+            const spacing = 12.0;
+            final gridWidth = max(constraints.maxWidth - horizontalPadding * 2, 0.0);
+            final gridHeight = max(constraints.maxHeight - verticalPadding * 2, 0.0);
+
+            double childAspectRatio = 1.0;
+            if (gridWidth > 0 && gridHeight > 0) {
+              final tileWidth = (gridWidth - spacing) / 2;
+              final tileHeight = (gridHeight - spacing) / 2;
+              if (tileWidth > 0 && tileHeight > 0) {
+                childAspectRatio = tileWidth / tileHeight;
+              }
+            }
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: verticalPadding),
+              child: SizedBox.expand(
                 child: GridView.builder(
                   physics: const NeverScrollableScrollPhysics(),
-                  shrinkWrap: true,
-                  itemCount: tiles.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 1,
+                    mainAxisSpacing: spacing,
+                    crossAxisSpacing: spacing,
+                    childAspectRatio: childAspectRatio,
                   ),
+                  itemCount: tiles.length,
                   itemBuilder: (context, index) => tiles[index],
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -883,15 +962,6 @@ class _QuadrantPageState extends State<QuadrantPage> {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(.9),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.star_rate, color: Colors.pinkAccent, size: 28),
-                ),
-                const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
                     '公司十大重要展示项',
@@ -1028,15 +1098,6 @@ class _QuadrantPageState extends State<QuadrantPage> {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(.9),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.assignment, color: Color(0xFF1E88E5), size: 28),
-                ),
-                const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
                     '公司十大派发任务',
@@ -1093,7 +1154,10 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                   final dueText = item.dueTime != null ? _dateFormat.format(item.dueTime!) : '无截止时间';
                                   final statusColor = _taskStatusColor(item.status);
                                   final statusLabel = _taskStatusLabel(item.status);
-                                  return Container(
+                                  return InkWell(
+                                    borderRadius: BorderRadius.circular(10),
+                                    onTap: () => _openDashboardTaskDetails(item),
+                                    child: Container(
                                     decoration: BoxDecoration(
                                       color: Colors.white.withOpacity(.96),
                                       borderRadius: BorderRadius.circular(10),
@@ -1149,6 +1213,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                           ],
                                         ),
                                       ],
+                                      ),
                                     ),
                                   );
                                 },
@@ -1182,15 +1247,6 @@ class _QuadrantPageState extends State<QuadrantPage> {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(.9),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.insights, color: Color(0xFF20BF55), size: 28),
-                ),
-                const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
                     '个人十大重要展示项',
@@ -1328,15 +1384,6 @@ class _QuadrantPageState extends State<QuadrantPage> {
             children: [
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(.9),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.book, color: Colors.deepOrange, size: 28),
-                  ),
-                  const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
                       '个人日志',
@@ -1405,7 +1452,10 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                     final dueText = item.endTime != null ? _dateFormat.format(item.endTime!) : '无截止时间';
                                     final statusColor = _statusColor(item);
                                     final statusLabel = _statusLabel(item);
-                                    return Container(
+                                  return InkWell(
+                                    borderRadius: BorderRadius.circular(10),
+                                    onTap: () => _openDashboardLogDetails(item),
+                                    child: Container(
                                       decoration: BoxDecoration(
                                         color: Colors.white.withOpacity(.96),
                                         borderRadius: BorderRadius.circular(10),
@@ -1457,6 +1507,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                             ],
                                           ),
                                         ],
+                                      ),
                                       ),
                                     );
                                   },

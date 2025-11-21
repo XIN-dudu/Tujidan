@@ -1347,6 +1347,179 @@ app.post('/api/user/avatar', auth, upload.single('avatar'), async (req, res) => 
   }
 });
 
+/**
+ * @swagger
+ * /api/user/profile:
+ *   put:
+ *     summary: 更新用户个人信息
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名
+ *               password:
+ *                 type: string
+ *                 description: 新密码（可选）
+ *               email:
+ *                 type: string
+ *                 description: 邮箱
+ *               phone:
+ *                 type: string
+ *                 description: 手机号
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       400:
+ *         description: 参数错误
+ *       409:
+ *         description: 用户名或邮箱已被使用
+ */
+// 更新用户信息接口
+app.put('/api/user/profile', auth, async (req, res) => {
+  try {
+    const { username, password, email, phone } = req.body;
+    const userId = req.user.id;
+    const connection = await getConn();
+
+    // 构建更新字段和值
+    const updateFields = [];
+    const updateValues = [];
+
+    // 更新用户名
+    if (username !== undefined) {
+      if (username.trim().length === 0) {
+        await connection.end();
+        return res.status(400).json({ 
+          success: false, 
+          message: '用户名不能为空' 
+        });
+      }
+      
+      // 检查用户名是否已被其他用户使用
+      const [existingUsername] = await connection.execute(
+        'SELECT id FROM users WHERE username = ? AND id != ?',
+        [username.trim(), userId]
+      );
+      
+      if (existingUsername.length > 0) {
+        await connection.end();
+        return res.status(409).json({ 
+          success: false, 
+          message: '该用户名已被使用' 
+        });
+      }
+      
+      updateFields.push('username = ?');
+      updateValues.push(username.trim());
+    }
+
+    // 更新邮箱
+    if (email !== undefined) {
+      if (email && email.trim().length > 0) {
+        // 检查邮箱是否已被其他用户使用
+        const [existingEmail] = await connection.execute(
+          'SELECT id FROM users WHERE email = ? AND id != ?',
+          [email.trim(), userId]
+        );
+        
+        if (existingEmail.length > 0) {
+          await connection.end();
+          return res.status(409).json({ 
+            success: false, 
+            message: '该邮箱已被使用' 
+          });
+        }
+      }
+      
+      updateFields.push('email = ?');
+      updateValues.push(email && email.trim().length > 0 ? email.trim() : null);
+    }
+
+    // 更新手机号
+    if (phone !== undefined) {
+      updateFields.push('phone = ?');
+      updateValues.push(phone && phone.trim().length > 0 ? phone.trim() : null);
+    }
+
+    // 更新密码
+    if (password !== undefined) {
+      if (password.length < 6) {
+        await connection.end();
+        return res.status(400).json({ 
+          success: false, 
+          message: '密码至少6位' 
+        });
+      }
+      
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(password, saltRounds);
+      updateFields.push('password_hash = ?');
+      updateValues.push(hashedPassword);
+    }
+
+    // 如果没有要更新的字段
+    if (updateFields.length === 0) {
+      await connection.end();
+      return res.status(400).json({ 
+        success: false, 
+        message: '没有提供要更新的字段' 
+      });
+    }
+
+    // 执行更新
+    updateValues.push(userId);
+    await connection.execute(
+      `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`,
+      updateValues
+    );
+
+    // 获取更新后的用户信息
+    const [users] = await connection.execute(
+      'SELECT id, username, email, real_name, phone, position, avatar_url, created_at FROM users WHERE id = ?',
+      [userId]
+    );
+
+    await connection.end();
+
+    if (users.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: '用户不存在' 
+      });
+    }
+
+    const user = users[0];
+    res.json({
+      success: true,
+      message: '更新成功',
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        realName: user.real_name,
+        phone: user.phone,
+        position: user.position,
+        avatarUrl: user.avatar_url,
+        createdAt: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error('更新用户信息失败:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: '服务器内部错误' 
+    });
+  }
+});
+
 // ---- Log & Task Images ----
 
 app.post('/api/logs/:id/images', auth, upload.array('images', MAX_IMAGES_PER_REQUEST), async (req, res) => {

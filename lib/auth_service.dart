@@ -5,7 +5,7 @@ import 'services/user_service.dart';
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
-  static const String _baseUrl = 'http://localhost:3001/api'; // 开发环境
+  static const String _baseUrl = 'http://127.0.0.1:3001/api'; // 开发环境
   // 生产环境请改为: 'http://your-server-ip:3001/api'
   
   // 获取存储的token

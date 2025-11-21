@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/api_response.dart';
 
 class ApiClient {
-  static const String baseUrl = 'http://localhost:3001/api';
+  static const String baseUrl = 'http://127.0.0.1:3001/api';
   static const Duration timeout = Duration(seconds: 30);
 
   static Future<Map<String, String>> _authHeaders([Map<String, String>? headers]) async {

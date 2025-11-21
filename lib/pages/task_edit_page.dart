@@ -37,6 +37,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
   final TextEditingController _assignee = TextEditingController();
   final ImagePicker _imagePicker = ImagePicker();
   String? _assigneeId; // 存储用户ID
+  String? _assigneeName; // 存储负责人名称
   DateTime? _due;
   DateTime? _planStart;
   TaskPriority _priority = TaskPriority.low;
@@ -44,6 +45,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
   double _progress = 0;
   bool _saving = false;
   List<String> _imageDataUris = [];
+  bool _dueManuallyAdjusted = false;
 
   @override
   void initState() {
@@ -51,13 +53,24 @@ class _TaskEditPageState extends State<TaskEditPage> {
     if (widget.task != null) {
       _name.text = widget.task!.name;
       _desc.text = widget.task!.description;
-      _assignee.text = widget.task!.assignee;
+      _assigneeId = widget.task!.assigneeId.isNotEmpty ? widget.task!.assigneeId : null;
+      if (widget.task!.assignee.isNotEmpty && widget.task!.assignee != widget.task!.assigneeId) {
+        _assigneeName = widget.task!.assignee;
+      } else {
+        _assigneeName = null;
+      }
+      _assignee.text = _formatAssigneeDisplay(id: _assigneeId, name: _assigneeName);
       _due = widget.task!.deadline;
       _planStart = widget.task!.plannedStart;
       _priority = widget.task!.priority;
       _status = widget.task!.status;
       _progress = widget.task!.progress.toDouble();
       _imageDataUris = List<String>.from(widget.task!.images);
+      _dueManuallyAdjusted = true;
+    } else {
+      final now = DateTime.now();
+      _planStart = now;
+      _due = now.add(const Duration(days: 2));
     }
   }
 
@@ -69,15 +82,23 @@ class _TaskEditPageState extends State<TaskEditPage> {
     super.dispose();
   }
 
-  Future<void> _save({bool publish = false}) async {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    if (widget.task == null && (_assigneeId == null || _assigneeId!.trim().isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请选择负责人后再分配任务')),
+      );
+      return;
+    }
     setState(() => _saving = true);
     final now = DateTime.now();
+    final selectedAssigneeId = (_assigneeId ?? '').trim();
     final task = Task(
       id: widget.task?.id ?? '',
       name: _name.text.trim(),
       description: _desc.text.trim(),
-      assignee: _assigneeId ?? _assignee.text.trim(),
+      assignee: _assigneeName ?? '',
+      assigneeId: selectedAssigneeId,
       creator: widget.task?.creator ?? '', // 创建时后端会自动设置，编辑时保持原值
       deadline: _due ?? now,
       plannedStart: _planStart,
@@ -91,28 +112,23 @@ class _TaskEditPageState extends State<TaskEditPage> {
 
     ApiResponse<Task> res;
     if (widget.task == null) {
-      if (publish) {
-        // 创建并分配
-        res = await TaskService.createAndPublishTask(
-          task,
-          assigneeId: _assigneeId,
-        );
-      } else {
-        // 仅创建
-        res = await TaskService.createTask(task);
-      }
+      res = await TaskService.createTask(
+        task,
+        ownerUserId: selectedAssigneeId.isNotEmpty ? selectedAssigneeId : null,
+      );
     } else {
       res = await TaskService.updateTask(task);
     }
     if (!mounted) return;
     setState(() => _saving = false);
     if (res.success) {
-      // The original instruction was to pop with `true`, which is already done.
-      // However, the failed block suggests a SnackBar was intended for success cases.
-      // Adding it for better UX consistency.
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('进度更新成功')));
+      ).showSnackBar(
+        SnackBar(
+          content: Text(widget.task == null ? '任务创建成功并已分配' : '任务保存成功'),
+        ),
+      );
       Navigator.of(context).pop(true);
     } else {
       ScaffoldMessenger.of(
@@ -128,7 +144,12 @@ class _TaskEditPageState extends State<TaskEditPage> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (d != null) setState(() => _due = d);
+    if (d != null) {
+      setState(() {
+        _due = d;
+        _dueManuallyAdjusted = true;
+      });
+    }
   }
 
   Future<void> _pickImages() async {
@@ -261,6 +282,17 @@ class _TaskEditPageState extends State<TaskEditPage> {
     }
   }
 
+  String _formatAssigneeDisplay({String? id, String? name}) {
+    final trimmedName = name?.trim() ?? '';
+    final trimmedId = id?.trim() ?? '';
+    if (trimmedName.isNotEmpty && trimmedId.isNotEmpty) {
+      return '$trimmedName (ID:$trimmedId)';
+    }
+    if (trimmedName.isNotEmpty) return trimmedName;
+    if (trimmedId.isNotEmpty) return '用户ID: $trimmedId';
+    return '';
+  }
+
   // 显示长按菜单
   void _showImageMenu(BuildContext context, int index) {
     showModalBottomSheet(
@@ -373,7 +405,14 @@ class _TaskEditPageState extends State<TaskEditPage> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (d != null) setState(() => _planStart = d);
+    if (d != null) {
+      setState(() {
+        _planStart = d;
+        if (!_dueManuallyAdjusted || _due == null || _due!.isBefore(d)) {
+          _due = d.add(const Duration(days: 2));
+        }
+      });
+    }
   }
 
   @override
@@ -483,7 +522,11 @@ class _TaskEditPageState extends State<TaskEditPage> {
                             if (picked != null) {
                               setState(() {
                                 _assigneeId = picked['id'];
-                                _assignee.text = picked['name'] ?? '';
+                                _assigneeName = picked['name'];
+                                _assignee.text = _formatAssigneeDisplay(
+                                  id: _assigneeId,
+                                  name: _assigneeName,
+                                );
                               });
                             }
                           }
@@ -540,25 +583,10 @@ class _TaskEditPageState extends State<TaskEditPage> {
                   const SizedBox(height: 12),
                 ],
                 if (widget.task == null) ...[
-                  // 创建任务时显示两个按钮
-                  ElevatedButton(
-                    onPressed: _saving ? null : () => _save(publish: false),
-                    child: _saving
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('创建任务'),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 48),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
                   ElevatedButton.icon(
-                    onPressed: _saving ? null : () => _save(publish: true),
+                    onPressed: _saving ? null : _save,
                     icon: const Icon(Icons.campaign),
-                    label: const Text('创建并分配任务'),
+                    label: Text(_saving ? '创建中...' : '创建并分配任务'),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
                     ),
@@ -568,7 +596,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
                   if (widget.canEditProgressOnly) ...[
                     // 只能编辑进度时，显示保存按钮（统一使用保存方法）
                     ElevatedButton(
-                      onPressed: _saving ? null : () => _save(publish: false),
+                      onPressed: _saving ? null : _save,
                       child: _saving
                           ? const SizedBox(
                               width: 20,
@@ -584,7 +612,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
                   ] else ...[
                     // 可以编辑所有字段时，只显示保存按钮（包含进度更新）
                     ElevatedButton(
-                      onPressed: _saving ? null : () => _save(publish: false),
+                      onPressed: _saving ? null : _save,
                       child: _saving
                           ? const SizedBox(
                               width: 20,

@@ -33,7 +33,6 @@ class _TaskViewPageState extends State<TaskViewPage> {
   bool _canPublish = false;
   bool _canAccept = false;
   bool _canCancelAccept = false;
-  String? _currentUserId;
   final UserService _userService = UserService();
 
   @override
@@ -51,22 +50,17 @@ class _TaskViewPageState extends State<TaskViewPage> {
     final currentUserId = userInfo?['id']?.toString() ?? '';
     final isFounderOrAdmin = roles.contains('admin') || roles.contains('founder');
     final isDeptHead = roles.contains('dept_head');
-    final isStaff = roles.contains('staff');
     
     // 判断当前用户是否是任务创建者
     final isCreator = _task.creator == currentUserId;
     // 判断当前用户是否是任务负责人
-    final isAssignee = _task.assignee == currentUserId && _task.assignee.isNotEmpty;
-    // 判断任务是否已分配（不是pending_assignment）
-    final isAssigned = _task.status != TaskStatus.pending_assignment;
+    final isAssignee = _task.assigneeId == currentUserId && _task.assigneeId.isNotEmpty;
     // 判断任务是否已接收（in_progress或completed）
     final isAccepted = _task.status == TaskStatus.in_progress || _task.status == TaskStatus.completed;
     // 判断任务是否待接收（not_started且已分配）
     final isPendingAccept = _task.status == TaskStatus.not_started && isAssignee;
     
     setState(() {
-      _currentUserId = currentUserId;
-      
       // 编辑权限：founder/admin可以编辑任何任务，dept_head只能编辑自己创建的
       _canEdit = isFounderOrAdmin || (isDeptHead && isCreator);
       
@@ -85,6 +79,16 @@ class _TaskViewPageState extends State<TaskViewPage> {
       // 取消接收权限：只有已接收任务的负责人可以取消
       _canCancelAccept = isAssignee && isAccepted;
     });
+  }
+
+  String _formatAssigneeDisplay() {
+    if (_task.assigneeId.isEmpty) {
+      return '未指定';
+    }
+    if (_task.assignee.isEmpty || _task.assignee == _task.assigneeId) {
+      return '用户ID: ${_task.assigneeId}';
+    }
+    return '${_task.assignee} (ID: ${_task.assigneeId})';
   }
 
   Future<void> _reloadTask() async {
@@ -115,7 +119,7 @@ class _TaskViewPageState extends State<TaskViewPage> {
 
   Future<void> _publish() async {
     setState(() => _working = true);
-    final ApiResponse<Task> res = await TaskService.publishTask(_task.id, ownerUserId: _task.assignee);
+    final ApiResponse<Task> res = await TaskService.publishTask(_task.id, ownerUserId: _task.assigneeId);
     if (!mounted) return;
     setState(() => _working = false);
     if (res.success && res.data != null) {
@@ -347,7 +351,9 @@ class _TaskViewPageState extends State<TaskViewPage> {
                 const SizedBox(height: 8),
                 Text('状态：${_task.status.displayName}'),
                 const SizedBox(height: 8),
-                Text('负责人：${_task.assignee.isEmpty ? '未指定' : _task.assignee}'),
+                Text(
+                  '负责人：${_formatAssigneeDisplay()}',
+                ),
                 const SizedBox(height: 8),
                 Text('计划截至：${_task.deadline.year}-${_task.deadline.month.toString().padLeft(2, '0')}-${_task.deadline.day.toString().padLeft(2, '0')}'),
                 if (_task.description.isNotEmpty) ...[

@@ -440,7 +440,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
           avatarImage = NetworkImage(avatarUrl);
         } else if (avatarUrl.startsWith('/')) {
           // 相对路径，转换为完整 URL
-          avatarImage = NetworkImage('http://localhost:3001$avatarUrl');
+          avatarImage = NetworkImage('http://127.0.0.1:3001$avatarUrl');
         }
       } catch (e) {
         print('解析头像失败: $e');
@@ -524,6 +524,21 @@ class _UserProfilePageState extends State<UserProfilePage> {
             _buildInfoRow('邮箱', email.isNotEmpty ? email : '未设置'),
             const SizedBox(height: 8),
             _buildInfoRow('建号时间', createdAtText),
+            const SizedBox(height: 24),
+            // 修改信息按钮
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _showEditProfileDialog,
+                icon: const Icon(Icons.edit),
+                label: const Text('修改信息'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[50],
+                  foregroundColor: Colors.blue[700],
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -717,6 +732,270 @@ class _UserProfilePageState extends State<UserProfilePage> {
         ),
       ),
     );
+  }
+
+  Future<void> _showEditProfileDialog() async {
+    if (_userInfo == null) return;
+
+    // 创建文本控制器，使用当前值初始化
+    final usernameController = TextEditingController(
+      text: (_userInfo!['username'] ?? '').toString(),
+    );
+    final phoneController = TextEditingController(
+      text: (_userInfo!['phone'] ?? '').toString(),
+    );
+    final emailController = TextEditingController(
+      text: (_userInfo!['email'] ?? '').toString(),
+    );
+    final passwordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+
+    // 用于控制密码输入框的显示
+    bool showPasswordFields = false;
+    bool isSubmitting = false;
+    String? errorMessage;
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> submit() async {
+            // 验证用户名
+            if (usernameController.text.trim().isEmpty) {
+              setDialogState(() {
+                errorMessage = '用户名不能为空';
+              });
+              return;
+            }
+
+            // 如果显示了密码字段，验证密码
+            if (showPasswordFields) {
+              if (passwordController.text.isEmpty) {
+                setDialogState(() {
+                  errorMessage = '请输入新密码';
+                });
+                return;
+              }
+              if (passwordController.text.length < 6) {
+                setDialogState(() {
+                  errorMessage = '密码至少6位';
+                });
+                return;
+              }
+              if (passwordController.text != confirmPasswordController.text) {
+                setDialogState(() {
+                  errorMessage = '两次输入的密码不一致';
+                });
+                return;
+              }
+            }
+
+            setDialogState(() {
+              isSubmitting = true;
+              errorMessage = null;
+            });
+
+            // 调用更新接口
+            final response = await _userService.updateUserProfile(
+              username: usernameController.text.trim(),
+              phone: phoneController.text.trim().isEmpty 
+                  ? null 
+                  : phoneController.text.trim(),
+              email: emailController.text.trim().isEmpty 
+                  ? null 
+                  : emailController.text.trim(),
+              password: showPasswordFields && passwordController.text.isNotEmpty
+                  ? passwordController.text
+                  : null,
+            );
+
+            if (!mounted) return;
+
+            if (response.success) {
+              // 更新成功，关闭对话框并刷新数据
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(response.message)),
+              );
+              await _loadUserData();
+            } else {
+              // 更新失败，显示错误信息
+              setDialogState(() {
+                isSubmitting = false;
+                errorMessage = response.message;
+              });
+            }
+          }
+
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.edit, color: Colors.blue),
+                SizedBox(width: 8),
+                Text('修改个人信息'),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: SizedBox(
+                width: MediaQuery.of(context).size.width * 0.9,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ID显示（不可编辑）
+                    TextField(
+                      controller: TextEditingController(
+                        text: 'ID: ${_userInfo!['id']}',
+                      ),
+                      enabled: false,
+                      decoration: const InputDecoration(
+                        labelText: '用户ID',
+                        border: OutlineInputBorder(),
+                        suffixIcon: Icon(Icons.lock, size: 16),
+                      ),
+                      style: const TextStyle(
+                        fontStyle: FontStyle.italic,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // 用户名
+                    TextField(
+                      controller: usernameController,
+                      decoration: const InputDecoration(
+                        labelText: '用户名 *',
+                        border: OutlineInputBorder(),
+                        hintText: '请输入用户名',
+                      ),
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 16),
+                    // 手机号
+                    TextField(
+                      controller: phoneController,
+                      decoration: const InputDecoration(
+                        labelText: '手机号',
+                        border: OutlineInputBorder(),
+                        hintText: '请输入手机号（可选）',
+                      ),
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 16),
+                    // 邮箱
+                    TextField(
+                      controller: emailController,
+                      decoration: const InputDecoration(
+                        labelText: '邮箱',
+                        border: OutlineInputBorder(),
+                        hintText: '请输入邮箱（可选）',
+                      ),
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 16),
+                    // 修改密码开关
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: showPasswordFields,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              showPasswordFields = value ?? false;
+                              if (!showPasswordFields) {
+                                passwordController.clear();
+                                confirmPasswordController.clear();
+                              }
+                            });
+                          },
+                        ),
+                        const Text('修改密码'),
+                      ],
+                    ),
+                    // 密码输入框（条件显示）
+                    if (showPasswordFields) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: passwordController,
+                        decoration: const InputDecoration(
+                          labelText: '新密码 *',
+                          border: OutlineInputBorder(),
+                          hintText: '至少6位',
+                        ),
+                        obscureText: true,
+                        textInputAction: TextInputAction.next,
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: confirmPasswordController,
+                        decoration: const InputDecoration(
+                          labelText: '确认新密码 *',
+                          border: OutlineInputBorder(),
+                          hintText: '请再次输入新密码',
+                        ),
+                        obscureText: true,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => submit(),
+                      ),
+                    ],
+                    // 错误信息显示
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red[50],
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red[200]!),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.error_outline, color: Colors.red[700], size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                errorMessage!,
+                                style: TextStyle(color: Colors.red[700]),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSubmitting ? null : () => Navigator.of(context).pop(),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: isSubmitting ? null : submit,
+                child: isSubmitting
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : const Text('保存'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    // 清理控制器
+    usernameController.dispose();
+    phoneController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    confirmPasswordController.dispose();
   }
 
 }
