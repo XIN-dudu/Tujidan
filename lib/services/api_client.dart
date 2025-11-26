@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/server_config.dart';
 import '../models/api_response.dart';
 
 class ApiClient {
-  static const String baseUrl = 'http://127.0.0.1:3001/api';
   static const Duration timeout = Duration(seconds: 30);
 
   static Future<Map<String, String>> _authHeaders([Map<String, String>? headers]) async {
@@ -23,6 +23,7 @@ class ApiClient {
     T Function(dynamic)? fromJson,
   }) async {
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http
           .get(
             Uri.parse('$baseUrl$endpoint'),
@@ -46,6 +47,7 @@ class ApiClient {
     T Function(dynamic)? fromJson,
   }) async {
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http
           .post(
             Uri.parse('$baseUrl$endpoint'),
@@ -70,6 +72,7 @@ class ApiClient {
     T Function(dynamic)? fromJson,
   }) async {
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http
           .put(
             Uri.parse('$baseUrl$endpoint'),
@@ -94,6 +97,7 @@ class ApiClient {
     T Function(dynamic)? fromJson,
   }) async {
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http
           .patch(
             Uri.parse('$baseUrl$endpoint'),
@@ -117,6 +121,7 @@ class ApiClient {
     T Function(dynamic)? fromJson,
   }) async {
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http
           .delete(
             Uri.parse('$baseUrl$endpoint'),

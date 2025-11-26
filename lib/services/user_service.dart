@@ -3,11 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/server_config.dart';
 import '../models/api_response.dart';
 
 class UserService {
   static const String _tokenKey = 'auth_token';
-  static const String _baseUrl = 'http://127.0.0.1:3001/api';
   
   // 头像缓存：存储解码后的 ImageProvider 和用户ID
   static ImageProvider? _cachedAvatarImage;
@@ -27,8 +27,9 @@ class UserService {
       if (token == null) return null;
 
       // 使用 /api/verify 接口获取当前登录用户信息
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http.get(
-        Uri.parse('$_baseUrl/verify'),
+        Uri.parse('$baseUrl/verify'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -127,8 +128,9 @@ class UserService {
       final String? token = await _getToken();
       if (token == null) return null;
 
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http.get(
-        Uri.parse('$_baseUrl/user/permissions'),
+        Uri.parse('$baseUrl/user/permissions'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -212,9 +214,10 @@ class UserService {
       final String? token = await _getToken();
       if (token == null) return false;
 
+      final baseUrl = await ServerConfig.getBaseUrl();
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('$_baseUrl/user/avatar'),
+        Uri.parse('$baseUrl/user/avatar'),
       );
 
       request.headers['Authorization'] = 'Bearer $token';
@@ -265,8 +268,9 @@ class UserService {
       if (email != null) body['email'] = email;
       if (phone != null) body['phone'] = phone;
 
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http.put(
-        Uri.parse('$_baseUrl/user/profile'),
+        Uri.parse('$baseUrl/user/profile'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',

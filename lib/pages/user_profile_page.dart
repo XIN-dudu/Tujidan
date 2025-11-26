@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import '../config/server_config.dart';
 import '../services/user_service.dart';
 import '../services/mbti_service.dart';
 import '../auth_service.dart';
@@ -32,12 +33,22 @@ class _UserProfilePageState extends State<UserProfilePage> {
   Map<String, dynamic>? _mbtiAnalysis;
   bool _isLoadingMBTI = false;
   bool _isLoadingSuggestions = false;
+  String _fileBaseUrl = 'http://127.0.0.1:3001';
 
   @override
   void initState() {
     super.initState();
+    _loadServerAddress();
     _loadUserData();
     _loadMBTIAnalysis();
+  }
+
+  Future<void> _loadServerAddress() async {
+    final baseUrl = await ServerConfig.getFileBaseUrl();
+    if (!mounted) return;
+    setState(() {
+      _fileBaseUrl = baseUrl;
+    });
   }
 
   Future<void> _loadUserData() async {
@@ -440,7 +451,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
           avatarImage = NetworkImage(avatarUrl);
         } else if (avatarUrl.startsWith('/')) {
           // 相对路径，转换为完整 URL
-          avatarImage = NetworkImage('http://127.0.0.1:3001$avatarUrl');
+          avatarImage = NetworkImage('$_fileBaseUrl$avatarUrl');
         }
       } catch (e) {
         print('解析头像失败: $e');

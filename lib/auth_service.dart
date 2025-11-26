@@ -1,12 +1,11 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'config/server_config.dart';
 import 'services/user_service.dart';
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
-  static const String _baseUrl = 'http://127.0.0.1:3001/api'; // 开发环境
-  // 生产环境请改为: 'http://your-server-ip:3001/api'
   
   // 获取存储的token
   Future<String?> _getToken() async {
@@ -29,8 +28,9 @@ class AuthService {
 
     // 验证token是否有效
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http.get(
-        Uri.parse('$_baseUrl/verify'),
+        Uri.parse('$baseUrl/verify'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -58,9 +58,10 @@ class AuthService {
     String? position,
   }) async {
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       // 发送注册请求到后端，设置超时
       final response = await http.post(
-        Uri.parse('$_baseUrl/register'),
+        Uri.parse('$baseUrl/register'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'username': username,
@@ -94,9 +95,10 @@ class AuthService {
   // 用户登录
   Future<String?> login({required String username, required String password}) async {
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       // 发送登录请求到后端，设置超时
       final response = await http.post(
-        Uri.parse('$_baseUrl/login'),
+        Uri.parse('$baseUrl/login'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'username': username,
@@ -141,8 +143,9 @@ class AuthService {
     if (token == null) return null;
 
     try {
+      final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http.get(
-        Uri.parse('$_baseUrl/verify'),
+        Uri.parse('$baseUrl/verify'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',

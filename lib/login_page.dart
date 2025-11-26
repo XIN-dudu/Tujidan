@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:test_flutter/auth_service.dart';
+import 'package:test_flutter/config/server_config.dart';
 import 'package:test_flutter/main.dart';
 import 'package:test_flutter/register_page.dart';
 
@@ -17,6 +18,13 @@ class _LoginPageState extends State<LoginPage> {
   final AuthService _authService = AuthService();
   bool _isLoading = false;
   bool _obscure = true;
+  String _currentHost = '127.0.0.1';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCurrentHost();
+  }
 
   @override
   void dispose() {
@@ -43,6 +51,53 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Future<void> _loadCurrentHost() async {
+    final host = await ServerConfig.getHost();
+    if (!mounted) return;
+    setState(() {
+      _currentHost = host;
+    });
+  }
+
+  Future<void> _openServerSettings() async {
+    final controller = TextEditingController(text: _currentHost);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('设置服务器地址'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'IP 或域名',
+              hintText: '例如: 192.168.1.100',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+
+    if (result != null && result.isNotEmpty) {
+      await ServerConfig.setHost(result);
+      await _loadCurrentHost();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('服务器地址已更新为 $result')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -52,11 +107,25 @@ class _LoginPageState extends State<LoginPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 32),
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: _isLoading ? null : _openServerSettings,
+                    icon: const Icon(Icons.settings),
+                    tooltip: '设置服务器地址',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               const Text(
                 '登录',
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.left,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '当前服务器: $_currentHost:3001',
+                style: const TextStyle(color: Colors.grey),
               ),
               const SizedBox(height: 24),
               Form(
