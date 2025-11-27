@@ -126,6 +126,8 @@ class _QuadrantPageState extends State<QuadrantPage> {
   String? _personalTopItemsError;
   List<TopItem> _personalTopItems = [];
 
+  List<NotificationItem> _notifications = [];
+
   @override
   void initState() {
     super.initState();
@@ -133,7 +135,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
     _loadDashboardLogs();
     _loadCompanyTasks();
     _loadTopItems();
-     _loadPersonalTopItems();
+    _loadPersonalTopItems();
     _refreshNotifications();
   }
 
@@ -648,7 +650,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
     );
   }
 
-  Future<void> _openDashboardTaskDetails(DashboardTaskItem taskItem) async {
+  Future<void> _openDashboardTaskDetails(String taskId) async {
     if (!mounted) return;
     showDialog(
       context: context,
@@ -657,7 +659,8 @@ class _QuadrantPageState extends State<QuadrantPage> {
     );
     late ApiResponse<Task> response;
     try {
-      response = await TaskService.getTaskById(taskItem.id);
+      // d:\shixun\Tujidan\lib\main.dart:662
+    response = await TaskService.getTaskById(taskId);  
     } finally {
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pop();
@@ -677,7 +680,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
     }
   }
 
-  Future<void> _openDashboardLogDetails(DashboardLogItem logItem) async {
+  Future<void> _openDashboardLogDetails(String logId) async {
     if (!mounted) return;
     showDialog(
       context: context,
@@ -686,7 +689,8 @@ class _QuadrantPageState extends State<QuadrantPage> {
     );
     late ApiResponse<LogEntry> response;
     try {
-      response = await LogService.getLogById(logItem.id);
+      // d:\shixun\Tujidan\lib\main.dart:691
+    response = await LogService.getLogById(logId);
     } finally {
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pop();
@@ -706,30 +710,65 @@ class _QuadrantPageState extends State<QuadrantPage> {
     }
   }
 
-  void _showNotificationsPanel(BuildContext context) {
-    setState(() { _hasUnread = false; });
+  Future<void> _showNotificationsPanel() async {
+    // 在显示时，获取最新的通知列表
+    await _refreshNotifications();
+
+    if (!mounted) return;
+
+    // 标记所有为已读
+    if (_hasUnread) {
+      final success = await NotificationService.markAllAsRead();
+      // 标记成功后，立即刷新UI，让用户看到状态变化
+      if (success) {
+        await _refreshNotifications();
+      }
+    }
+
+    if (!mounted) return;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (context) {
-        return FutureBuilder<List<NotificationItem>>(
-          future: NotificationService.getNotifications(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            Future<void> deleteNotification(NotificationItem notification) async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('确认删除'),
+                  content: const Text('确定要删除这条通知吗？'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+                    TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除')),
+                  ],
+                ),
+              );
+
+              if (confirm != true) return;
+
+              final success = await NotificationService.deleteNotification(notification.id);
+              if (!mounted) return;
+              if (success) {
+                setModalState(() {
+                  _notifications.removeWhere((n) => n.id == notification.id);
+                });
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('删除失败，请稍后重试')),
+                );
+              }
             }
-            if (snapshot.hasError) {
-              return Center(child: Text('加载通知失败: ${snapshot.error}'));
-            }
-            final notifications = List<NotificationItem>.from(snapshot.data ?? []);
-            final now = DateTime.now();
-            notifications.sort((a, b) {
-              final at = a.timestamp.isAfter(now) ? now : a.timestamp;
-              final bt = b.timestamp.isAfter(now) ? now : b.timestamp;
-              final c = bt.compareTo(at);
-              if (c != 0) return c;
-              return a.type.index.compareTo(b.type.index);
+
+            // 排序，未读的在前，已读的在后，然后按时间倒序
+            _notifications.sort((a, b) {
+              if (a.isRead != b.isRead) {
+                return a.isRead ? 1 : -1;
+              }
+              return b.timestamp.compareTo(a.timestamp);
             });
+
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -740,7 +779,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
                       children: [
                         const Text(
                           '通知中心',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                         ),
                         const Spacer(),
                         IconButton(
@@ -750,21 +789,74 @@ class _QuadrantPageState extends State<QuadrantPage> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    if (notifications.isEmpty)
-                      const Center(child: Text('暂无通知'))
+                    if (_notifications.isEmpty)
+                      const Center(
+                          child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 40),
+                        child: Text('暂无通知', style: TextStyle(color: Colors.grey)),
+                      ))
                     else
-                      Expanded(
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.6,
                         child: ListView.separated(
-                          itemCount: notifications.length,
+                          itemCount: _notifications.length,
+                          separatorBuilder: (context, index) => const Divider(),
                           itemBuilder: (context, index) {
-                            final notification = notifications[index];
+                            final notification = _notifications[index];
                             return ListTile(
-                              title: Text(notification.title),
-                              subtitle: Text(notification.content ?? ''),
-                              trailing: Text(DateFormat('MM-dd HH:mm').format(notification.timestamp)),
+                              leading: Icon(
+                                notification.isRead ? Icons.notifications_none : Icons.notifications,
+                                color: notification.isRead ? Colors.grey : Theme.of(context).primaryColor,
+                              ),
+                              title: Text(
+                                notification.title,
+                                style: TextStyle(
+                                  fontWeight: notification.isRead ? FontWeight.normal : FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: notification.content != null ? Text(notification.content!) : null,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _formatTimestamp(notification.timestamp),
+                                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, size: 20),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    tooltip: '删除',
+                                    onPressed: () => deleteNotification(notification),
+                                  ),
+                                ],
+                              ),
+                              onTap: () {
+                                // 调试信息：打印通知的完整内容
+                                print('--- DEBUG NOTIFICATION ---');
+                                print('Related ID: ${notification.relatedId}');
+                                print('Entity Type: ${notification.entityType}');
+                                print('--------------------------');
+
+                                // 如果没有关联ID或类型，则不执行任何操作
+                                if (notification.relatedId == null || notification.entityType == null) {
+                                  print('Navigation skipped: relatedId or entityType is null.');
+                                  return;
+                                }
+
+                                // 先关闭当前的通知面板
+                                Navigator.pop(context);
+
+                                // 根据类型决定跳转到哪里
+                                if (notification.entityType == 'task') {
+                                  _openDashboardTaskDetails(notification.relatedId!);
+                                } else if (notification.entityType == 'log') {
+                                  _openDashboardLogDetails(notification.relatedId!);
+                                }
+                              },
                             );
                           },
-                          separatorBuilder: (context, index) => const Divider(height: 1),
                         ),
                       ),
                   ],
@@ -774,7 +866,22 @@ class _QuadrantPageState extends State<QuadrantPage> {
           },
         );
       },
-    );
+    ).then((_) {
+      // 关闭后再次刷新状态，确保同步
+      _refreshNotifications();
+    });
+  }
+
+  String _formatTimestamp(DateTime dt) {
+    final now = DateTime.now();
+    final difference = now.difference(dt);
+    if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}分钟前';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}小时前';
+    } else {
+      return DateFormat('MM-dd').format(dt);
+    }
   }
 
   Future<void> _logout(BuildContext context) async {
@@ -879,7 +986,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
             children: [
               IconButton(
                 icon: const Icon(Icons.notifications_none),
-                onPressed: () => _showNotificationsPanel(context),
+                onPressed: _showNotificationsPanel,
                 tooltip: '通知',
               ),
               if (_hasUnread)
@@ -1156,7 +1263,8 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                   final statusLabel = _taskStatusLabel(item.status);
                                   return InkWell(
                                     borderRadius: BorderRadius.circular(10),
-                                    onTap: () => _openDashboardTaskDetails(item),
+                                    // d:\shixun\Tujidan\lib\main.dart:1203
+                                    onTap: () => _openDashboardTaskDetails(item.id),
                                     child: Container(
                                     decoration: BoxDecoration(
                                       color: Colors.white.withOpacity(.96),
@@ -1454,7 +1562,8 @@ class _QuadrantPageState extends State<QuadrantPage> {
                                     final statusLabel = _statusLabel(item);
                                   return InkWell(
                                     borderRadius: BorderRadius.circular(10),
-                                    onTap: () => _openDashboardLogDetails(item),
+                                    // d:\shixun\Tujidan\lib\main.dart:1233
+                                    onTap: () => _openDashboardLogDetails(item.id),
                                     child: Container(
                                       decoration: BoxDecoration(
                                         color: Colors.white.withOpacity(.96),
@@ -1523,9 +1632,13 @@ class _QuadrantPageState extends State<QuadrantPage> {
   }
 
   Future<void> _refreshNotifications() async {
-    final list = await NotificationService.getNotifications();
     if (!mounted) return;
-    setState(() { _hasUnread = list.isNotEmpty; });
+    final notifications = await NotificationService.getNotifications();
+    if (!mounted) return;
+    setState(() {
+      _notifications = notifications;
+      _hasUnread = notifications.any((n) => !n.isRead);
+    });
   }
 }
 
