@@ -26,7 +26,7 @@ class MockDataService {
       creator: '1', // 模拟创建者ID
       deadline: DateTime.now().add(const Duration(days: 3)),
       priority: TaskPriority.medium,
-      status: TaskStatus.not_started,
+      status: TaskStatus.in_progress,
       progress: 0,
       createdAt: DateTime.now().subtract(const Duration(days: 2)),
       updatedAt: DateTime.now().subtract(const Duration(days: 2)),

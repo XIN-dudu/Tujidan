@@ -31,8 +31,6 @@ class _TaskViewPageState extends State<TaskViewPage> {
   bool _canEditProgress = false; // 只能编辑进度的权限
   bool _canDelete = false;
   bool _canPublish = false;
-  bool _canAccept = false;
-  bool _canCancelAccept = false;
   final UserService _userService = UserService();
 
   @override
@@ -55,29 +53,19 @@ class _TaskViewPageState extends State<TaskViewPage> {
     final isCreator = _task.creator == currentUserId;
     // 判断当前用户是否是任务负责人
     final isAssignee = _task.assigneeId == currentUserId && _task.assigneeId.isNotEmpty;
-    // 判断任务是否已接收（in_progress或completed）
-    final isAccepted = _task.status == TaskStatus.in_progress || _task.status == TaskStatus.completed;
-    // 判断任务是否待接收（not_started且已分配）
-    final isPendingAccept = _task.status == TaskStatus.not_started && isAssignee;
-    
+
     setState(() {
-      // 编辑权限：founder/admin可以编辑任何任务，dept_head只能编辑自己创建的
-      _canEdit = isFounderOrAdmin || (isDeptHead && isCreator);
+      // 编辑权限：founder/admin可以编辑任何任务，dept_head只能编辑自己创建的，负责人可编辑自己任务
+      _canEdit = isFounderOrAdmin || (isDeptHead && isCreator) || isAssignee;
       
-      // 编辑进度权限：被分配方（非创建者）可以编辑任务进度
-      _canEditProgress = isAssignee && !isCreator;
+      // 编辑进度权限：当前仅用于兼容旧逻辑
+      _canEditProgress = !_canEdit && isAssignee;
       
       // 删除权限：founder/admin可以删除任何任务，dept_head只能删除自己创建的，staff不能删除
       _canDelete = isFounderOrAdmin || (isDeptHead && isCreator);
       
       // 分配权限：founder/admin可以分配任何任务，dept_head只能分配自己创建的，staff不能分配
       _canPublish = isFounderOrAdmin || (isDeptHead && isCreator);
-      
-      // 接收权限：只有被分配人（且必须是已分配状态）可以接收
-      _canAccept = isAssignee && isPendingAccept;
-      
-      // 取消接收权限：只有已接收任务的负责人可以取消
-      _canCancelAccept = isAssignee && isAccepted;
     });
   }
 
@@ -126,53 +114,6 @@ class _TaskViewPageState extends State<TaskViewPage> {
       setState(() => _task = res.data!);
       await _checkPermissions(); // 重新检查权限
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('分配成功')));
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
-    }
-  }
-
-  Future<void> _accept() async {
-    setState(() => _working = true);
-    final ApiResponse<Task> res = await TaskService.acceptTask(_task.id);
-    if (!mounted) return;
-    setState(() => _working = false);
-    if (res.success && res.data != null) {
-      setState(() => _task = res.data!);
-      await _checkPermissions(); // 重新检查权限
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已接收任务')));
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
-    }
-  }
-
-  Future<void> _cancelAccept() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('确认取消接收'),
-        content: const Text('确定要取消接收此任务吗？任务状态将变更为待开始。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('确认'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    setState(() => _working = true);
-    final ApiResponse<Task> res = await TaskService.cancelAcceptTask(_task.id);
-    if (!mounted) return;
-    setState(() => _working = false);
-    if (res.success && res.data != null) {
-      setState(() => _task = res.data!);
-      await _checkPermissions(); // 重新检查权限
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已取消接收')));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
     }
@@ -300,8 +241,8 @@ class _TaskViewPageState extends State<TaskViewPage> {
 
   @override
   Widget build(BuildContext context) {
-    // 判断任务是否已分配：状态为not_started且assignee_id不为空
-    final bool isPublished = _task.status == TaskStatus.not_started && _task.assignee.isNotEmpty;
+    // 判断任务是否已分配（非待分配状态）
+    final bool isAssigned = _task.status != TaskStatus.pending_assignment;
     
     return PopScope(
       canPop: false,
@@ -381,48 +322,14 @@ class _TaskViewPageState extends State<TaskViewPage> {
                     ),
                   ),
                 if (_canEdit || _canEditProgress) const SizedBox(height: 12),
-                // 根据权限和状态显示不同按钮
-                if (_canCancelAccept)
-                  // 已接收任务，显示取消接收按钮（只有有权限的用户可见）
+                if (_canPublish)
                   ElevatedButton.icon(
-                    onPressed: _working ? null : _cancelAccept,
-                    icon: const Icon(Icons.cancel),
-                    label: const Text('取消接收'),
+                    onPressed: _working ? null : _publish,
+                    icon: Icon(isAssigned ? Icons.undo : Icons.campaign),
+                    label: Text(isAssigned ? '撤回分配' : '分配任务'),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 48),
                     ),
-                  )
-                else if (_canPublish || _canAccept)
-                  // 未接收任务，显示接收和分配/撤回分配按钮
-                  Row(
-                    children: [
-                      if (_canPublish) ...[
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _working ? null : _publish,
-                            icon: Icon(isPublished ? Icons.undo : Icons.campaign),
-                            label: Text(isPublished ? '撤回分配' : '分配任务'),
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 48),
-                            ),
-                          ),
-                        ),
-                        if (_canAccept) const SizedBox(width: 12),
-                      ],
-                      // 接收任务按钮（只有被分配人且有权限的用户可见）
-                      if (_canAccept) ...[
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _working ? null : _accept,
-                            icon: const Icon(Icons.how_to_reg),
-                            label: const Text('接收任务'),
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 48),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
                   ),
                 const SizedBox(height: 16),
               ],

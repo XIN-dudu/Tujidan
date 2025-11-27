@@ -3010,7 +3010,7 @@ app.get('/api/dashboard/tasks', auth, async (req, res) => {
       id: row.id,
       name: row.name || '',
       description: row.description || '',
-      status: row.status || 'not_started',
+      status: row.status || 'pending_assignment',
       priority: row.priority || 'low',
       progress: row.progress ?? 0,
       planStartTime: row.plan_start_time,
@@ -3537,8 +3537,8 @@ app.get('/api/tasks', auth, async (req, res) => {
  *                 description: 优先级
  *               status:
  *                 type: string
- *                 default: not_started
- *                 description: 任务状态
+ *                 default: in_progress
+ *                 description: 任务状态（由系统根据负责人自动设置）
  *               progress:
  *                 type: integer
  *                 minimum: 0
@@ -3578,7 +3578,7 @@ app.get('/api/tasks', auth, async (req, res) => {
  */
 app.post('/api/tasks', auth, async (req, res) => {
   try {
-    const { name, description = null, priority = 'low', status = 'not_started', progress = 0, dueTime = null, planStartTime = null, ownerUserId, images: imageDataUris = [] } = req.body;
+    const { name, description = null, priority = 'low', progress = 0, dueTime = null, planStartTime = null, ownerUserId, images: imageDataUris = [] } = req.body;
     if (!name) {
       return res.status(400).json({ success: false, message: '任务名称必填' });
     }
@@ -3629,7 +3629,7 @@ app.post('/api/tasks', auth, async (req, res) => {
     const dueDt = toMySQLDateTime(dueTime);
     
     // 确定任务状态和分配逻辑
-    let finalAssigneeId = hasExplicitOwner ? ownerUserIdValue : req.user.id;
+    let finalAssigneeId;
     let taskStatus;
     
     if (isDeptHead && !isFounderOrAdmin && hasExplicitOwner && ownerUserIdValue !== req.user.id) {
@@ -3640,14 +3640,19 @@ app.post('/api/tasks', auth, async (req, res) => {
       }
     }
 
-    if (hasExplicitOwner && ownerUserIdValue !== req.user.id) {
-      // 创建时指定了负责人（创建并分配）→ 状态为待处理
-      taskStatus = 'not_started';
+    if (hasExplicitOwner) {
+      if (ownerUserIdValue === null || ownerUserIdValue === undefined) {
+        // 主动清空负责人 → 保持待分配状态
+        taskStatus = 'pending_assignment';
+        finalAssigneeId = req.user.id; // 数据库限制不允许 NULL，使用创建者占位
+      } else {
+        finalAssigneeId = ownerUserIdValue;
+        taskStatus = 'in_progress';
+      }
     } else {
-      // 创建时未指定负责人或指定自己 → 状态为待分配
-      taskStatus = 'pending_assignment';
-      // 如果是待分配状态，assignee_id应该为NULL或创建者自己
-      finalAssigneeId = req.user.id; // 临时设置为创建者，实际应该为NULL，但数据库不允许NULL
+      // 未显式指定负责人 → 默认创建者自己负责，立即视为已接收
+      finalAssigneeId = req.user.id;
+      taskStatus = 'in_progress';
     }
     
     const [result] = await connection.execute(
@@ -3655,8 +3660,8 @@ app.post('/api/tasks', auth, async (req, res) => {
       [name, description, priority, taskStatus, Math.min(Math.max(progress, 0), 100), planStartDt, dueDt, finalAssigneeId, req.user.id]
     );
 
-    // 【新增逻辑】如果任务被分配，则创建通知
-        if (finalAssigneeId) {
+    // 如果任务被分配，则创建通知
+        if (finalAssigneeId && taskStatus === 'in_progress') {
           const notificationTitle = `您有一个新任务: ${name}`;
           const notificationContent = `创建者: ${req.user.username}`;
           await connection.execute(
@@ -3783,13 +3788,10 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
             return res.status(403).json({ success: false, message: '权限不足，只有创建者或负责人可以修改任务' });
         }
         
-        // 如果是负责人但不是创建者，则只能修改进度和状态
-        if (isAssignee && !isCreator) {
-            if (Object.keys(req.body).some(key => !['progress', 'status'].includes(key))) {
-                await connection.rollback();
-                await connection.end();
-                return res.status(403).json({ success: false, message: '作为任务负责人，您只能更新进度和状态' });
-            }
+        if (!isCreator && ownerUserProvided && ownerUserIdValue !== taskBeforeUpdate.assignee_id) {
+            await connection.rollback();
+            await connection.end();
+            return res.status(403).json({ success: false, message: '只有任务创建者可以重新分配负责人' });
         }
 
         if (isDeptHead && !isFounderOrAdmin && hasExplicitOwnerValue && ownerUserIdValue !== req.user.id) {
@@ -3803,12 +3805,23 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
 
         // 3. 执行更新
         const newStatus = normalizeTaskStatus(status);
+        let derivedStatus = null;
+        if (ownerUserProvided) {
+            if (ownerUserIdValue === null || ownerUserIdValue === undefined) {
+                derivedStatus = 'pending_assignment';
+            } else {
+                derivedStatus = 'in_progress';
+            }
+        }
+        const statusToApply = status !== undefined ? newStatus : derivedStatus;
         const planStartDt = toMySQLDateTime(planStartTime);
         const dueDt = toMySQLDateTime(dueTime);
 
+        const assigneeParam = ownerUserProvided ? ownerUserIdValue : null;
+
         await connection.execute(
             'UPDATE tasks SET task_name = COALESCE(?, task_name), description = COALESCE(?, description), priority = COALESCE(?, priority), status = COALESCE(?, status), progress = COALESCE(?, progress), plan_start_time = COALESCE(?, plan_start_time), plan_end_time = COALESCE(?, plan_end_time), assignee_id = COALESCE(?, assignee_id) WHERE id = ?',
-            [name, description, priority, newStatus, progress, planStartDt, dueDt, ownerUserIdValue, id]
+            [name, description, priority, statusToApply, progress, planStartDt, dueDt, assigneeParam, id]
         );
 
         // 4. --- 通知逻辑 ---
@@ -4060,7 +4073,7 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
  *       403:
  *         description: 权限不足
  */
-// 任务发布（指定负责人并置为未开始）
+// 任务发布（指定负责人并置为进行中）
 app.post('/api/tasks/:id/publish', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -4115,17 +4128,19 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
       }
     }
     
-    // 判断是否应该撤回分配：任务已分配（status='not_started'且assignee_id已分配）
-    const isAssigned = task.status == 'not_started' && task.assignee_id != null;
+    const isAssigned = task.status !== null && task.status !== undefined && task.status !== 'pending_assignment';
     
     if (isAssigned) {
-      // 撤回分配：将status改回pending_assignment，assignee_id设置为创建者
-      await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [req.user.id, 'pending_assignment', id]);
+      // 撤回分配：将status改回pending_assignment，assignee_id设置为创建者占位
+      await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [task.creator_id, 'pending_assignment', id]);
     } else {
-      // 分配任务：设置assignee_id和status（从pending_assignment变为not_started）
-      // 如果ownerUserId为空，则设置为创建者（避免assignee_id为NULL）
+      // 分配任务：设置assignee_id并直接置为进行中
       const finalAssigneeId = hasExplicitOwner ? ownerUserIdValue : req.user.id;
-      await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [finalAssigneeId, 'not_started', id]);
+      if (finalAssigneeId === null || finalAssigneeId === undefined) {
+        await connection.end();
+        return res.status(400).json({ success: false, message: '请指定负责人后再分配任务' });
+      }
+      await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [finalAssigneeId, 'in_progress', id]);
     }
     const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
     rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
@@ -4133,149 +4148,6 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
     res.json({ success: true, task: rows[0] });
   } catch (e) {
     console.error('发布/撤回任务失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
-  }
-});
-
-/**
- * @swagger
- * /api/tasks/{id}/accept:
- *   post:
- *     summary: 接收任务
- *     tags: [任务管理]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *         description: 任务ID
- *     responses:
- *       200:
- *         description: 接收成功
- *       400:
- *         description: 任务状态不允许接收
- *       404:
- *         description: 任务不存在
- *       403:
- *         description: 权限不足
- */
-// 接收任务（接单/接受）
-app.post('/api/tasks/:id/accept', auth, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const connection = await getConn();
-    
-    // 获取用户角色
-    const [roles] = await connection.execute(`
-      SELECT r.role_name 
-      FROM roles r
-      JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.user_id = ?
-    `, [req.user.id]);
-    
-    const userRoles = roles.map(r => r.role_name);
-    const isFounderOrAdmin = userRoles.includes('admin') || userRoles.includes('founder');
-    const isDeptHead = userRoles.includes('dept_head');
-    const isStaff = userRoles.includes('staff');
-    
-    const [taskInfo] = await connection.execute('SELECT id, assignee_id, status, creator_id FROM tasks WHERE id = ? LIMIT 1', [id]);
-    if (taskInfo.length === 0) {
-      await connection.end();
-      return res.status(404).json({ success: false, message: '任务不存在' });
-    }
-    
-    const task = taskInfo[0];
-    
-    // staff只能接收分配给自己的任务，且必须是已分配状态
-    if (isStaff) {
-      if (task.assignee_id != req.user.id) {
-        await connection.end();
-        return res.status(403).json({ success: false, message: '只能接收分配给自己的任务' });
-      }
-      if (task.status == 'pending_assignment') {
-        await connection.end();
-        return res.status(403).json({ success: false, message: '任务尚未分配，无法接收' });
-      }
-    }
-    
-    // dept_head只能接收自己创建的任务
-    if (isDeptHead && task.creator_id !== req.user.id) {
-      await connection.end();
-      return res.status(403).json({ success: false, message: '只能接收自己创建的任务' });
-    }
-    
-    // 只有负责人能接收任务（founder/admin可以接收任意任务）
-    if (!isFounderOrAdmin && task.assignee_id != req.user.id) {
-      await connection.end();
-      return res.status(403).json({ success: false, message: '只有任务负责人才能接收任务' });
-    }
-    
-    // 只有状态为not_started的任务才能接收
-    if (task.status != 'not_started') {
-      await connection.end();
-      return res.status(400).json({ success: false, message: '只有待开始的任务才能接收' });
-    }
-    await connection.execute('UPDATE tasks SET status = ? WHERE id = ?', ['in_progress', id]);
-    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
-    rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
-    await connection.end();
-    res.json({ success: true, task: rows[0] });
-  } catch (e) {
-    console.error('接收任务失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
-  }
-});
-
-/**
- * @swagger
- * /api/tasks/{id}/cancel-accept:
- *   post:
- *     summary: 取消接收任务
- *     tags: [任务管理]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *         description: 任务ID
- *     responses:
- *       200:
- *         description: 取消成功
- *       404:
- *         description: 任务不存在
- *       403:
- *         description: 权限不足
- */
-// 取消接收任务（将状态改回待开始）
-app.post('/api/tasks/:id/cancel-accept', auth, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const connection = await getConn();
-    const [taskInfo] = await connection.execute('SELECT id, assignee_id, status FROM tasks WHERE id = ? LIMIT 1', [id]);
-    if (taskInfo.length === 0) {
-      await connection.end();
-      return res.status(404).json({ success: false, message: '任务不存在' });
-    }
-    const task = taskInfo[0];
-    // 检查当前用户是否是任务接收者
-    if (task.assignee_id != req.user.id) {
-      await connection.end();
-      return res.status(403).json({ success: false, message: '只有任务接收者可以取消接收' });
-    }
-    // 将状态改回待开始，不清空负责人（保留分配记录）
-    await connection.execute('UPDATE tasks SET status = ? WHERE id = ?', ['not_started', id]);
-    const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
-    rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
-    await connection.end();
-    res.json({ success: true, task: rows[0] });
-  } catch (e) {
-    console.error('取消接收任务失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
   }
 });
@@ -4401,7 +4273,20 @@ app.post('/api/logs', auth, async (req, res) => {
             }
             const ownerUserIdValue = ownerUserIdInfo.value;
             const hasExplicitOwner = ownerUserIdInfo.provided && ownerUserIdValue !== null && ownerUserIdValue !== undefined;
-            const finalOwnerUserId = hasExplicitOwner ? ownerUserIdValue : req.user.id;
+            let finalOwnerUserId;
+            let taskStatusForLogCreation;
+            if (ownerUserIdInfo.provided) {
+                if (ownerUserIdValue === null || ownerUserIdValue === undefined) {
+                    taskStatusForLogCreation = 'pending_assignment';
+                    finalOwnerUserId = req.user.id;
+                } else {
+                    finalOwnerUserId = ownerUserIdValue;
+                    taskStatusForLogCreation = 'in_progress';
+                }
+            } else {
+                finalOwnerUserId = req.user.id;
+                taskStatusForLogCreation = 'in_progress';
+            }
 
             const [roles] = await connection.execute(`
               SELECT r.role_name 
@@ -4437,8 +4322,8 @@ app.post('/api/logs', auth, async (req, res) => {
             }
             const dueDt = toMySQLDateTime(dueTime);
             const [tRes] = await connection.execute(
-                'INSERT INTO tasks (task_name, priority, progress, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?)',
-                [name, tPriority, Math.min(Math.max(tProgress, 0), 100), dueDt, finalOwnerUserId, req.user.id]
+                'INSERT INTO tasks (task_name, priority, progress, status, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [name, tPriority, Math.min(Math.max(tProgress, 0), 100), taskStatusForLogCreation, dueDt, finalOwnerUserId, req.user.id]
             );
             finalTaskId = tRes.insertId;
         }

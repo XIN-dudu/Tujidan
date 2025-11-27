@@ -114,7 +114,7 @@ class Task {
       case 'cancelled':
         return TaskStatus.cancelled;
       default:
-        return TaskStatus.not_started;
+        return TaskStatus.pending_assignment;
     }
   }
 

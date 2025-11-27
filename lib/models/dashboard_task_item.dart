@@ -41,7 +41,7 @@ class DashboardTaskItem {
       id: json['id'].toString(),
       name: (json['name'] ?? '').toString(),
       description: (json['description'] ?? '').toString(),
-      status: (json['status'] ?? 'not_started').toString(),
+      status: (json['status'] ?? 'pending_assignment').toString(),
       priority: (json['priority'] ?? 'low').toString(),
       progress: int.tryParse(json['progress']?.toString() ?? '') ?? 0,
       planStartTime: _parseDate(json['planStartTime']),

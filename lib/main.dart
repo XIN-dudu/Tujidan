@@ -965,7 +965,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
       case 'cancelled':
         return '已取消';
       default:
-        return '未开始';
+        return '待分配';
     }
   }
 

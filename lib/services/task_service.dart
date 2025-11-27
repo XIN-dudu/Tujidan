@@ -94,30 +94,16 @@ class TaskService {
     );
   }
 
-  // 分配任务（指定负责人并置为未开始）
+  // 分配任务（指定负责人后直接进入进行中）
   static Future<ApiResponse<Task>> publishTask(
     String taskId, {
     String? ownerUserId,
   }) async {
+    final parsedOwner =
+        ownerUserId != null && ownerUserId.trim().isNotEmpty ? int.tryParse(ownerUserId) : null;
     return await ApiClient.post<Task>(
       '/tasks/$taskId/publish',
-      body: {if (ownerUserId != null) 'ownerUserId': int.tryParse(ownerUserId)},
-      fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
-    );
-  }
-
-  // 接收任务（自己接单并置为进行中）
-  static Future<ApiResponse<Task>> acceptTask(String taskId) async {
-    return await ApiClient.post<Task>(
-      '/tasks/$taskId/accept',
-      fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
-    );
-  }
-
-  // 取消接收任务（将状态改回待开始）
-  static Future<ApiResponse<Task>> cancelAcceptTask(String taskId) async {
-    return await ApiClient.post<Task>(
-      '/tasks/$taskId/cancel-accept',
+      body: {if (parsedOwner != null) 'ownerUserId': parsedOwner},
       fromJson: (data) => Task.fromJson(data as Map<String, dynamic>),
     );
   }
