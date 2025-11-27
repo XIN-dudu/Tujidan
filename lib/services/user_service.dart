@@ -69,6 +69,7 @@ class UserService {
             'real_name': user['realName'], // 转换小驼峰为下划线
             'phone': user['phone'],
             'position': user['position'],
+            'department_id': user['departmentId'] ?? user['department_id'],
           'avatar_url': avatarUrl, // 转换小驼峰为下划线
           'created_at': user['createdAt'] ?? user['created_at'],
           };
@@ -290,6 +291,7 @@ class UserService {
           'real_name': user['realName'],
           'phone': user['phone'],
           'position': user['position'],
+          'department_id': user['departmentId'] ?? user['department_id'],
           'avatar_url': user['avatarUrl'],
           'created_at': user['createdAt'],
         };

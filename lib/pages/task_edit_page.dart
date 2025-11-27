@@ -793,10 +793,16 @@ class _UserPickerDialogState extends State<_UserPickerDialog> {
                       final u = _list[i];
                       final name = (u['real_name'] ?? u['username'] ?? '未知')
                           .toString();
+                      final departmentText = (() {
+                        final dept = u['department_id'];
+                        if (dept == null) return '所属部门: 未设置';
+                        final deptStr = dept.toString();
+                        return deptStr.isEmpty ? '所属部门: 未设置' : '所属部门: $deptStr';
+                      })();
                       return ListTile(
                         title: Text(name),
                         subtitle: Text(
-                          'ID: ${u['id']}  用户名: ${u['username'] ?? ''}',
+                          'ID: ${u['id']}  用户名: ${u['username'] ?? ''}\n$departmentText',
                         ),
                         onTap: () => Navigator.of(
                           context,

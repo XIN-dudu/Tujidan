@@ -464,6 +464,69 @@ async function hasPermission(userId, permission) {
   }
 }
 
+async function getUserRoleNames(connection, userId) {
+  const [rows] = await connection.execute(
+    `SELECT r.role_name 
+     FROM roles r
+     JOIN user_roles ur ON r.id = ur.role_id
+     WHERE ur.user_id = ?`,
+    [userId]
+  );
+  return rows.map(r => r.role_name);
+}
+
+async function getUserDepartmentId(connection, userId) {
+  const [[row]] = await connection.execute(
+    'SELECT department_id FROM users WHERE id = ? LIMIT 1',
+    [userId]
+  );
+  return row ? row.department_id : null;
+}
+
+function normalizeOptionalOwnerUserId(rawValue) {
+  if (rawValue === undefined) {
+    return { provided: false, value: undefined };
+  }
+  if (rawValue === null || rawValue === '') {
+    return { provided: true, value: null };
+  }
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+    return { provided: true, error: '负责人ID必须为正整数' };
+  }
+  return { provided: true, value: parsed };
+}
+
+async function validateDeptHeadAssignment(connection, deptHeadUserId, targetUserId) {
+  if (!targetUserId || Number(targetUserId) === Number(deptHeadUserId)) {
+    return { ok: true };
+  }
+  const [[deptHead]] = await connection.execute(
+    'SELECT id, department_id FROM users WHERE id = ? LIMIT 1',
+    [deptHeadUserId]
+  );
+  if (!deptHead) {
+    return { ok: false, status: 400, message: '部门负责人不存在' };
+  }
+  if (deptHead.department_id === null || deptHead.department_id === undefined) {
+    return { ok: false, status: 400, message: '请先为该负责人设置所属部门' };
+  }
+  const [[targetUser]] = await connection.execute(
+    'SELECT id, department_id FROM users WHERE id = ? LIMIT 1',
+    [targetUserId]
+  );
+  if (!targetUser) {
+    return { ok: false, status: 400, message: '指定的负责人不存在' };
+  }
+  if (targetUser.department_id === null || targetUser.department_id === undefined) {
+    return { ok: false, status: 403, message: '负责人只能分配给已加入部门的成员' };
+  }
+  if (Number(targetUser.department_id) !== Number(deptHead.department_id)) {
+    return { ok: false, status: 403, message: '部门负责人只能给本部门成员分配任务' };
+  }
+  return { ok: true };
+}
+
 async function hasPermissionWithConnection(connection, userId, permission) {
   const [permissions] = await connection.execute(`
     SELECT DISTINCT p.perm_key 
@@ -1149,7 +1212,7 @@ app.get('/api/verify', async (req, res) => {
     const connection = await mysql.createConnection(dbConfig);
 
     const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at FROM users WHERE id = ? AND status = 1',
+      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at, department_id FROM users WHERE id = ? AND status = 1',
       [decoded.userId]
     );
 
@@ -1173,7 +1236,8 @@ app.get('/api/verify', async (req, res) => {
         phone: user.phone,
         position: user.position,
         avatarUrl: user.avatar_url,
-        createdAt: user.created_at
+        createdAt: user.created_at,
+        departmentId: user.department_id
       }
     });
 
@@ -1899,17 +1963,43 @@ app.get('/api/tasks/:id/images', auth, async (req, res) => {
  */
 // 获取用户列表
 app.get('/api/users', auth, async (req, res) => {
+  let connection;
   try {
-    const connection = await getConn();
-    const [rows] = await connection.execute(
-      'SELECT id, username, avatar_url, created_at, updated_at FROM users ORDER BY created_at DESC'
-    );
+    connection = await getConn();
+    const roleNames = await getUserRoleNames(connection, req.user.id);
+    const isGlobalManager = roleNames.includes('founder') || roleNames.includes('admin');
+    const isDeptHead = roleNames.includes('dept_head');
+    let departmentFilter = null;
+
+    if (isDeptHead && !isGlobalManager) {
+      departmentFilter = await getUserDepartmentId(connection, req.user.id);
+      if (departmentFilter === null || departmentFilter === undefined) {
+        await connection.end();
+        return res.status(400).json({
+          success: false,
+          message: '请先在个人信息中设置所属部门后再分配任务'
+        });
+      }
+    }
+
+    let sql = 'SELECT id, username, avatar_url, department_id, created_at, updated_at FROM users WHERE status = 1';
+    const params = [];
+
+    if (departmentFilter !== null) {
+      sql += ' AND department_id = ?';
+      params.push(departmentFilter);
+    }
+
+    sql += ' ORDER BY created_at DESC';
+
+    const [rows] = await connection.execute(sql, params);
     
     // 格式化用户数据以匹配前端期望
     const formattedUsers = rows.map(user => ({
       id: user.id.toString(),
       username: user.username,
       avatar_url: user.avatar_url,
+      department_id: user.department_id != null ? user.department_id.toString() : null,
       created_at: user.created_at,
       updated_at: user.updated_at
     }));
@@ -1917,6 +2007,7 @@ app.get('/api/users', auth, async (req, res) => {
     await connection.end();
     res.json({ success: true, users: formattedUsers });
   } catch (e) {
+    if (connection) await connection.end();
     console.error('获取用户列表失败:', e);
     res.status(500).json({ success: false, message: '服务器内部错误' });
   }
@@ -2058,25 +2149,51 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
  *                         type: string
  */
 app.get('/api/users/search', auth, async (req, res) => {
+  let connection;
   try {
-    const connection = await getConn();
+    connection = await getConn();
     const keyword = (req.query.keyword || '').toString().trim();
-    let sql, params;
-    if (keyword) {
-      // 有关键词时，模糊搜索用户名和姓名（仅返回活跃用户）
-      sql = 'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 AND (username LIKE ? OR real_name LIKE ?) ORDER BY id DESC LIMIT 20';
-      params = [`%${keyword}%`, `%${keyword}%`];
-    } else {
-      // 没有关键词时，返回所有活跃用户（限制50个）
-      sql = 'SELECT id, username, real_name, email, avatar_url FROM users WHERE status = 1 ORDER BY id DESC LIMIT 50';
-      params = [];
+    const roleNames = await getUserRoleNames(connection, req.user.id);
+    const isGlobalManager = roleNames.includes('founder') || roleNames.includes('admin');
+    const isDeptHead = roleNames.includes('dept_head');
+    let departmentFilter = null;
+
+    if (isDeptHead && !isGlobalManager) {
+      departmentFilter = await getUserDepartmentId(connection, req.user.id);
+      if (departmentFilter === null || departmentFilter === undefined) {
+        await connection.end();
+        return res.status(400).json({
+          success: false,
+          message: '请先在个人信息中设置所属部门后再分配任务'
+        });
+      }
     }
+
+    const conditions = ['status = 1'];
+    const params = [];
+
+    if (departmentFilter !== null) {
+      conditions.push('department_id = ?');
+      params.push(departmentFilter);
+    }
+
+    if (keyword) {
+      conditions.push('(username LIKE ? OR real_name LIKE ?)');
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
+
+    let sql = 'SELECT id, username, real_name, email, avatar_url, department_id FROM users';
+    if (conditions.length) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+    sql += ' ORDER BY id DESC ' + (keyword ? 'LIMIT 20' : 'LIMIT 50');
 
     const [userRows] = await connection.execute(sql, params);
 
     await connection.end();
     return res.json({ success: true, users: userRows });
   } catch (e) {
+    if (connection) await connection.end();
     console.error('查询用户失败:', e);
     return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
   }
@@ -3468,6 +3585,14 @@ app.post('/api/tasks', auth, async (req, res) => {
     if (typeof name !== 'string' || name.length > 64) {
       return res.status(400).json({ success: false, message: '任务名称长度超限' });
     }
+
+    const ownerUserIdInfo = normalizeOptionalOwnerUserId(ownerUserId);
+    if (ownerUserIdInfo.error) {
+      return res.status(400).json({ success: false, message: ownerUserIdInfo.error });
+    }
+    const ownerUserIdValue = ownerUserIdInfo.value;
+    const hasExplicitOwner = ownerUserIdInfo.provided && ownerUserIdValue !== null && ownerUserIdValue !== undefined;
+
     const connection = await getConn();
     
     // 获取用户角色
@@ -3504,10 +3629,18 @@ app.post('/api/tasks', auth, async (req, res) => {
     const dueDt = toMySQLDateTime(dueTime);
     
     // 确定任务状态和分配逻辑
-    let finalAssigneeId = ownerUserId || req.user.id;
+    let finalAssigneeId = hasExplicitOwner ? ownerUserIdValue : req.user.id;
     let taskStatus;
     
-    if (ownerUserId && ownerUserId !== req.user.id) {
+    if (isDeptHead && !isFounderOrAdmin && hasExplicitOwner && ownerUserIdValue !== req.user.id) {
+      const deptCheck = await validateDeptHeadAssignment(connection, req.user.id, ownerUserIdValue);
+      if (!deptCheck.ok) {
+        await connection.end();
+        return res.status(deptCheck.status).json({ success: false, message: deptCheck.message });
+      }
+    }
+
+    if (hasExplicitOwner && ownerUserIdValue !== req.user.id) {
       // 创建时指定了负责人（创建并分配）→ 状态为待处理
       taskStatus = 'not_started';
     } else {
@@ -3605,6 +3738,14 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
         return res.status(400).json({ success: false, message: '无效的任务ID' });
     }
 
+    const ownerUserIdInfo = normalizeOptionalOwnerUserId(ownerUserId);
+    if (ownerUserIdInfo.error) {
+        return res.status(400).json({ success: false, message: ownerUserIdInfo.error });
+    }
+    const ownerUserIdValue = ownerUserIdInfo.value;
+    const ownerUserProvided = ownerUserIdInfo.provided;
+    const hasExplicitOwnerValue = ownerUserProvided && ownerUserIdValue !== null && ownerUserIdValue !== undefined;
+
     const connection = await getConn();
     await connection.beginTransaction(); // 使用事务保证数据一致性
 
@@ -3620,6 +3761,16 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
             await connection.end();
             return res.status(404).json({ success: false, message: '任务不存在' });
         }
+
+        const [roleRows] = await connection.execute(`
+          SELECT r.role_name 
+          FROM roles r
+          JOIN user_roles ur ON r.id = ur.role_id
+          WHERE ur.user_id = ?
+        `, [req.user.id]);
+        const roleNames = roleRows.map(r => r.role_name);
+        const isFounderOrAdmin = roleNames.includes('admin') || roleNames.includes('founder');
+        const isDeptHead = roleNames.includes('dept_head');
 
         // 2. 权限检查
         const isCreator = taskBeforeUpdate.creator_id === req.user.id;
@@ -3641,6 +3792,15 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
             }
         }
 
+        if (isDeptHead && !isFounderOrAdmin && hasExplicitOwnerValue && ownerUserIdValue !== req.user.id) {
+            const deptCheck = await validateDeptHeadAssignment(connection, req.user.id, ownerUserIdValue);
+            if (!deptCheck.ok) {
+                await connection.rollback();
+                await connection.end();
+                return res.status(deptCheck.status).json({ success: false, message: deptCheck.message });
+            }
+        }
+
         // 3. 执行更新
         const newStatus = normalizeTaskStatus(status);
         const planStartDt = toMySQLDateTime(planStartTime);
@@ -3648,20 +3808,20 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
 
         await connection.execute(
             'UPDATE tasks SET task_name = COALESCE(?, task_name), description = COALESCE(?, description), priority = COALESCE(?, priority), status = COALESCE(?, status), progress = COALESCE(?, progress), plan_start_time = COALESCE(?, plan_start_time), plan_end_time = COALESCE(?, plan_end_time), assignee_id = COALESCE(?, assignee_id) WHERE id = ?',
-            [name, description, priority, newStatus, progress, planStartDt, dueDt, ownerUserId, id]
+            [name, description, priority, newStatus, progress, planStartDt, dueDt, ownerUserIdValue, id]
         );
 
         // 4. --- 通知逻辑 ---
         const updatedTaskName = name || taskBeforeUpdate.task_name;
-        const newAssigneeId = ownerUserId !== undefined ? ownerUserId : taskBeforeUpdate.assignee_id;
+        const newAssigneeId = ownerUserProvided ? ownerUserIdValue : taskBeforeUpdate.assignee_id;
 
         // a. 任务分配通知
-        if (ownerUserId !== undefined && ownerUserId !== null && ownerUserId !== taskBeforeUpdate.assignee_id) {
+        if (ownerUserProvided && ownerUserIdValue !== null && ownerUserIdValue !== undefined && ownerUserIdValue !== taskBeforeUpdate.assignee_id) {
             const notificationTitle = `新任务分配: ${updatedTaskName}`;
             const notificationContent = `您被指派了一个新任务: "${updatedTaskName}"`;
             await connection.execute(
                 "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
-                [ownerUserId, 'assignment', notificationTitle, notificationContent, id]
+                [ownerUserIdValue, 'assignment', notificationTitle, notificationContent, id]
             );
         }
 
@@ -3905,6 +4065,12 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const { ownerUserId } = req.body;
+    const ownerUserIdInfo = normalizeOptionalOwnerUserId(ownerUserId);
+    if (ownerUserIdInfo.error) {
+      return res.status(400).json({ success: false, message: ownerUserIdInfo.error });
+    }
+    const ownerUserIdValue = ownerUserIdInfo.value;
+    const hasExplicitOwner = ownerUserIdInfo.provided && ownerUserIdValue !== null && ownerUserIdValue !== undefined;
     const connection = await getConn();
     
     // 获取用户角色
@@ -3940,6 +4106,14 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
       await connection.end();
       return res.status(403).json({ success: false, message: '只能分配自己创建的任务' });
     }
+
+    if (isDeptHead && !isFounderOrAdmin && hasExplicitOwner && ownerUserIdValue !== req.user.id) {
+      const deptCheck = await validateDeptHeadAssignment(connection, req.user.id, ownerUserIdValue);
+      if (!deptCheck.ok) {
+        await connection.end();
+        return res.status(deptCheck.status).json({ success: false, message: deptCheck.message });
+      }
+    }
     
     // 判断是否应该撤回分配：任务已分配（status='not_started'且assignee_id已分配）
     const isAssigned = task.status == 'not_started' && task.assignee_id != null;
@@ -3950,7 +4124,7 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
     } else {
       // 分配任务：设置assignee_id和status（从pending_assignment变为not_started）
       // 如果ownerUserId为空，则设置为创建者（避免assignee_id为NULL）
-      const finalAssigneeId = ownerUserId || req.user.id;
+      const finalAssigneeId = hasExplicitOwner ? ownerUserIdValue : req.user.id;
       await connection.execute('UPDATE tasks SET assignee_id = ?, status = ? WHERE id = ?', [finalAssigneeId, 'not_started', id]);
     }
     const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
@@ -4218,8 +4392,43 @@ app.post('/api/logs', auth, async (req, res) => {
 
         // 如果需要，先创建新任务
         if (!finalTaskId && createNewTask && createNewTask.name) {
-            // ... (创建任务的逻辑保持不变)
-            const { name, priority: tPriority = 'low', progress: tProgress = 0, dueTime = null, ownerUserId = req.user.id } = createNewTask;
+            const { name, priority: tPriority = 'low', progress: tProgress = 0, dueTime = null, ownerUserId: rawOwnerUserId } = createNewTask;
+            const ownerUserIdInfo = normalizeOptionalOwnerUserId(rawOwnerUserId);
+            if (ownerUserIdInfo.error) {
+                await connection.rollback();
+                await connection.end();
+                return res.status(400).json({ success: false, message: ownerUserIdInfo.error });
+            }
+            const ownerUserIdValue = ownerUserIdInfo.value;
+            const hasExplicitOwner = ownerUserIdInfo.provided && ownerUserIdValue !== null && ownerUserIdValue !== undefined;
+            const finalOwnerUserId = hasExplicitOwner ? ownerUserIdValue : req.user.id;
+
+            const [roles] = await connection.execute(`
+              SELECT r.role_name 
+              FROM roles r
+              JOIN user_roles ur ON r.id = ur.role_id
+              WHERE ur.user_id = ?
+            `, [req.user.id]);
+            const roleNames = roles.map(r => r.role_name);
+            const isFounderOrAdmin = roleNames.includes('admin') || roleNames.includes('founder');
+            const isDeptHead = roleNames.includes('dept_head');
+            const isStaff = roleNames.includes('staff');
+
+            if (isStaff) {
+                await connection.rollback();
+                await connection.end();
+                return res.status(403).json({ success: false, message: '普通员工不能创建任务' });
+            }
+
+            if (isDeptHead && !isFounderOrAdmin && hasExplicitOwner && finalOwnerUserId !== req.user.id) {
+                const deptCheck = await validateDeptHeadAssignment(connection, req.user.id, finalOwnerUserId);
+                if (!deptCheck.ok) {
+                    await connection.rollback();
+                    await connection.end();
+                    return res.status(deptCheck.status).json({ success: false, message: deptCheck.message });
+                }
+            }
+
             const [dup] = await connection.execute('SELECT id FROM tasks WHERE task_name = ? AND creator_id = ? LIMIT 1', [name, req.user.id]);
             if (dup.length > 0) {
                 await connection.rollback();
@@ -4229,7 +4438,7 @@ app.post('/api/logs', auth, async (req, res) => {
             const dueDt = toMySQLDateTime(dueTime);
             const [tRes] = await connection.execute(
                 'INSERT INTO tasks (task_name, priority, progress, plan_end_time, assignee_id, creator_id) VALUES (?, ?, ?, ?, ?, ?)',
-                [name, tPriority, Math.min(Math.max(tProgress, 0), 100), dueDt, ownerUserId, req.user.id]
+                [name, tPriority, Math.min(Math.max(tProgress, 0), 100), dueDt, finalOwnerUserId, req.user.id]
             );
             finalTaskId = tRes.insertId;
         }

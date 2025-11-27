@@ -462,6 +462,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final username = (_userInfo!['username'] ?? '').toString();
     final phone = (_userInfo!['phone'] ?? '').toString();
     final email = (_userInfo!['email'] ?? '').toString();
+    final departmentIdRaw = _userInfo!['department_id']?.toString();
+    final departmentText = (departmentIdRaw != null && departmentIdRaw.isNotEmpty)
+        ? departmentIdRaw
+        : '未设置';
     final createdAtRaw = _userInfo!['created_at'];
     DateTime? createdAt;
     if (createdAtRaw != null) {
@@ -533,6 +537,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
             _buildInfoRow('手机号', phone.isNotEmpty ? phone : '未设置'),
             const SizedBox(height: 8),
             _buildInfoRow('邮箱', email.isNotEmpty ? email : '未设置'),
+            const SizedBox(height: 8),
+            _buildInfoRow('所属部门', departmentText),
             const SizedBox(height: 8),
             _buildInfoRow('建号时间', createdAtText),
             const SizedBox(height: 24),
