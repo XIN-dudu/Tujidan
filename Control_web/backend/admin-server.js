@@ -524,6 +524,8 @@ async function fetchAllActiveUsers() {
         u.position,
         u.avatar_url,
         u.status,
+        u.department_id,
+        u.mbit,
         u.created_at
       FROM users u
       WHERE u.status = 1
@@ -565,6 +567,9 @@ async function fetchAllActiveUsers() {
         position: user.position,
         avatar_url: user.avatar_url,
         status: user.status,
+        department_id: user.department_id || null,
+        department_name: user.department_id ? `部门${user.department_id}` : null,
+        mbit: user.mbit || null,
         created_at: user.created_at,
         primaryRole: roleInfo.names[0] || null,
         allRoles: roleInfo.names,
@@ -580,7 +585,9 @@ async function fetchAllActiveUsers() {
 app.put('/api/users/:id', auth, async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
-    const { username, realName, email, phone, position, password } = req.body;
+    const { username, realName, email, phone, position, password, departmentId, mbit } = req.body;
+    
+    console.log('更新用户请求:', { userId, departmentId, mbit, body: req.body });
     
     const connection = await getConn();
     
@@ -617,6 +624,17 @@ app.put('/api/users/:id', auth, async (req, res) => {
       updateFields.push('position = ?');
       updateValues.push(position);
     }
+    if (departmentId !== undefined) {
+      updateFields.push('department_id = ?');
+      updateValues.push(departmentId || null);
+      console.log('添加部门更新:', departmentId);
+    }
+    if (mbit !== undefined) {
+      // 现在字段允许 NULL，所以可以更新 null 值
+      updateFields.push('mbit = ?');
+      updateValues.push(mbit || null);
+      console.log('添加MBTI更新:', mbit);
+    }
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);
       updateFields.push('password_hash = ?');
@@ -631,14 +649,19 @@ app.put('/api/users/:id', auth, async (req, res) => {
     updateValues.push(userId);
     const sql = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
     
-    await connection.execute(sql, updateValues);
+    console.log('执行SQL:', sql);
+    console.log('参数值:', updateValues);
+    
+    const [result] = await connection.execute(sql, updateValues);
+    console.log('更新结果:', result.affectedRows, '行受影响');
+    
     connection.release();
     
     clearUserCache();
     return res.json({ success: true, message: '用户信息更新成功' });
   } catch (e) {
     console.error('更新用户信息失败:', e);
-    return res.status(500).json({ success: false, message: '服务器内部错误' });
+    return res.status(500).json({ success: false, message: '服务器内部错误: ' + e.message });
   }
 });
 
@@ -1429,7 +1452,7 @@ app.post('/api/tasks', auth, checkPermission('task:create'), async (req, res) =>
         assigneeId || null,
         req.user.id, // 创建者ID
         mysqlDateTime,
-        status || 'pending'
+        status || 'not_started'
       ]
     );
     
@@ -1459,6 +1482,31 @@ app.put('/api/tasks/:id', auth, checkPermission('task:edit'), async (req, res) =
   try {
     const taskId = parseInt(req.params.id, 10);
     const { name, description, priority, assigneeId, dueTime, status, progress } = req.body;
+    
+    // 兼容旧的/前端可能传入的状态值，统一映射为表结构中定义的枚举值
+    const VALID_STATUSES = [
+      'pending_assignment',
+      'not_started',
+      'in_progress',
+      'paused',
+      'completed',
+      'closed',
+      'cancelled'
+    ];
+    const STATUS_MAP = {
+      pending: 'not_started',        // 旧值 pending -> not_started
+      doing: 'in_progress',          // 如果前端用 doing 表示进行中
+      done: 'completed'              // 如果前端用 done 表示已完成
+      // 如有其他历史值，可以在这里继续扩展映射
+    };
+    // 将空字符串/null 视为“未提供状态”，避免错误更新
+    let normalizedStatus = status;
+    if (normalizedStatus === '' || normalizedStatus === null) {
+      normalizedStatus = undefined;
+    }
+    let finalStatus = normalizedStatus !== undefined
+      ? (STATUS_MAP[normalizedStatus] || normalizedStatus)
+      : undefined;
     
     const connection = await getConn();
     
@@ -1490,7 +1538,6 @@ app.put('/api/tasks/:id', auth, checkPermission('task:edit'), async (req, res) =
     }
     
     // 处理进度和状态：如果进度为100%，优先设置状态为completed
-    let finalStatus = status;
     if (progress !== undefined) {
       updateFields.push('progress = ?');
       updateValues.push(progress);
@@ -1502,8 +1549,13 @@ app.put('/api/tasks/:id', auth, checkPermission('task:edit'), async (req, res) =
     
     // 设置状态（如果进度为100%，这里会覆盖之前的状态）
     if (finalStatus !== undefined) {
+      // 只有在合法枚举值列表中的状态才更新，非法值直接忽略，避免数据库报错
+      if (VALID_STATUSES.includes(finalStatus)) {
       updateFields.push('status = ?');
       updateValues.push(finalStatus);
+      } else {
+        console.warn('忽略非法的任务状态值，不更新 status 字段:', finalStatus);
+      }
     }
     
     if (updateFields.length === 0) {

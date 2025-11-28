@@ -473,13 +473,15 @@
                                                 <th>真实姓名</th>
                                                 <th>邮箱</th>
                                                 <th>角色</th>
+                                                <th>部门</th>
+                                                <th>MBTI</th>
                                                 <th>状态</th>
                                                 <th>操作</th>
                                             </tr>
                                         </thead>
                                         <tbody id="users-table">
                                             <tr>
-                                                <td colspan="6" class="text-center">加载中...</td>
+                                                <td colspan="8" class="text-center">加载中...</td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -684,8 +686,30 @@
                             <input type="tel" class="form-control" id="phone">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">职位</label>
-                            <input type="text" class="form-control" id="position">
+                            <label class="form-label">部门ID</label>
+                            <input type="number" class="form-control" id="departmentId" placeholder="请输入部门ID（留空表示无部门）">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">MBTI</label>
+                            <select class="form-select" id="mbit">
+                                <option value="">请选择MBTI类型</option>
+                                <option value="INTJ">INTJ - 建筑师</option>
+                                <option value="INTP">INTP - 逻辑学家</option>
+                                <option value="ENTJ">ENTJ - 指挥官</option>
+                                <option value="ENTP">ENTP - 辩论家</option>
+                                <option value="INFJ">INFJ - 提倡者</option>
+                                <option value="INFP">INFP - 调停者</option>
+                                <option value="ENFJ">ENFJ - 主人公</option>
+                                <option value="ENFP">ENFP - 竞选者</option>
+                                <option value="ISTJ">ISTJ - 物流师</option>
+                                <option value="ISFJ">ISFJ - 守卫者</option>
+                                <option value="ESTJ">ESTJ - 总经理</option>
+                                <option value="ESFJ">ESFJ - 执政官</option>
+                                <option value="ISTP">ISTP - 鉴赏家</option>
+                                <option value="ISFP">ISFP - 探险家</option>
+                                <option value="ESTP">ESTP - 企业家</option>
+                                <option value="ESFP">ESFP - 表演者</option>
+                            </select>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">角色</label>

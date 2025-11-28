@@ -486,11 +486,49 @@ function displayUsers(users, pagination) {
             `;
         }
         
+        // 部门显示逻辑
+        let departmentDisplay = '';
+        if (user.department_name) {
+            departmentDisplay = `
+                <span class="badge bg-info">${user.department_name}</span>
+                <button class="btn btn-sm btn-outline-info ms-1" onclick="assignDepartment(${user.id})" title="编辑部门">
+                    <i class="bi bi-gear"></i>
+                </button>
+            `;
+        } else {
+            departmentDisplay = `
+                <span class="text-muted">无部门</span>
+                <button class="btn btn-sm btn-info ms-1" onclick="assignDepartment(${user.id})" title="分配部门">
+                    <i class="bi bi-plus"></i>
+                </button>
+            `;
+        }
+        
+        // MBTI显示逻辑
+        let mbitDisplay = '';
+        if (user.mbit) {
+            mbitDisplay = `
+                <span class="badge bg-warning text-dark">${user.mbit}</span>
+                <button class="btn btn-sm btn-outline-warning ms-1" onclick="assignMBTI(${user.id})" title="编辑MBTI">
+                    <i class="bi bi-gear"></i>
+                </button>
+            `;
+        } else {
+            mbitDisplay = `
+                <span class="text-muted">未设置</span>
+                <button class="btn btn-sm btn-warning ms-1" onclick="assignMBTI(${user.id})" title="设置MBTI">
+                    <i class="bi bi-plus"></i>
+                </button>
+            `;
+        }
+        
         row.innerHTML = `
             <td>${user.username}</td>
             <td>${user.real_name || '-'}</td>
             <td>${user.email || '-'}</td>
             <td>${roleDisplay}</td>
+            <td>${departmentDisplay}</td>
+            <td>${mbitDisplay}</td>
             <td><span class="badge bg-${user.status === 1 ? 'success' : 'danger'}">${user.status === 1 ? '正常' : '禁用'}</span></td>
             <td>
                 <button class="btn btn-sm btn-outline-primary me-1" onclick="editUser(${user.id})" title="编辑用户">
@@ -798,7 +836,8 @@ async function loadUserData(userId) {
             document.getElementById('realName').value = user.real_name || '';
             document.getElementById('email').value = user.email || '';
             document.getElementById('phone').value = user.phone || '';
-            document.getElementById('position').value = user.position || '';
+            document.getElementById('departmentId').value = user.departmentId || '';
+            document.getElementById('mbit').value = user.mbit || '';
             // 密码字段在编辑时留空
             document.getElementById('password').value = '';
             document.getElementById('password').placeholder = '留空表示不修改密码';
@@ -879,7 +918,8 @@ async function saveUser() {
         realName: document.getElementById('realName').value,
         email: document.getElementById('email').value,
         phone: document.getElementById('phone').value,
-        position: document.getElementById('position').value
+        departmentId: document.getElementById('departmentId').value ? parseInt(document.getElementById('departmentId').value) : null,
+        mbit: document.getElementById('mbit').value || null
     };
     
     // 只有在创建用户或修改密码时才包含密码
@@ -1313,6 +1353,228 @@ async function saveUserRoles(userId) {
     } catch (error) {
         console.error('保存用户角色失败:', error);
         showError('保存用户角色失败: ' + error.message);
+    }
+}
+
+async function assignDepartment(userId) {
+    try {
+        // 获取用户当前部门
+        const userResponse = await fetch(`${API_BASE}/users/${userId}`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const userData = await userResponse.json();
+        const currentDepartmentId = userData.success && userData.user ? userData.user.departmentId : null;
+        
+        // 创建部门ID输入框（因为目前没有departments表，直接输入部门ID）
+        const modalHtml = `
+            <div class="modal fade" id="departmentAssignModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">分配部门</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label">部门ID</label>
+                                <input type="number" class="form-control" id="departmentIdInput" 
+                                       value="${currentDepartmentId || ''}" 
+                                       placeholder="请输入部门ID（留空表示无部门）">
+                                <small class="form-text text-muted">目前系统使用部门ID，直接输入数字ID即可</small>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                            <button type="button" class="btn btn-primary" onclick="saveUserDepartment(${userId})">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // 移除旧的模态框
+        const oldModal = document.getElementById('departmentAssignModal');
+        if (oldModal) {
+            oldModal.remove();
+        }
+        
+        // 添加新的模态框
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('departmentAssignModal'));
+        modal.show();
+        
+    } catch (error) {
+        console.error('分配部门失败:', error);
+        showError('分配部门失败: ' + error.message);
+    }
+}
+
+async function saveUserDepartment(userId) {
+    try {
+        const departmentIdInput = document.getElementById('departmentIdInput');
+        const departmentIdValue = departmentIdInput.value.trim();
+        const departmentId = departmentIdValue === '' ? null : parseInt(departmentIdValue);
+        
+        // 验证输入
+        if (departmentIdValue !== '' && (isNaN(departmentId) || departmentId <= 0)) {
+            showError('请输入有效的部门ID（正整数）');
+            return;
+        }
+        
+        const response = await fetch(`${API_BASE}/users/${userId}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ departmentId: departmentId })
+        });
+        
+        // 检查响应状态
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('服务器错误响应:', errorText);
+            throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('部门分配成功');
+            bootstrap.Modal.getInstance(document.getElementById('departmentAssignModal')).hide();
+            clearCache('users'); // 清除缓存，强制刷新
+            loadUsers(true); // 重新加载用户列表
+        } else {
+            showError('部门分配失败: ' + (data.message || '未知错误'));
+        }
+    } catch (error) {
+        console.error('保存用户部门失败:', error);
+        showError('保存用户部门失败: ' + error.message);
+    }
+}
+
+async function assignMBTI(userId) {
+    try {
+        // 获取用户当前MBTI
+        const userResponse = await fetch(`${API_BASE}/users/${userId}`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const userData = await userResponse.json();
+        const currentMBTI = userData.success && userData.user ? userData.user.mbit : null;
+        
+        // 创建MBTI选择下拉框
+        const mbtiOptions = `
+            <option value="">未设置</option>
+            <option value="INTJ" ${currentMBTI === 'INTJ' ? 'selected' : ''}>INTJ - 建筑师</option>
+            <option value="INTP" ${currentMBTI === 'INTP' ? 'selected' : ''}>INTP - 逻辑学家</option>
+            <option value="ENTJ" ${currentMBTI === 'ENTJ' ? 'selected' : ''}>ENTJ - 指挥官</option>
+            <option value="ENTP" ${currentMBTI === 'ENTP' ? 'selected' : ''}>ENTP - 辩论家</option>
+            <option value="INFJ" ${currentMBTI === 'INFJ' ? 'selected' : ''}>INFJ - 提倡者</option>
+            <option value="INFP" ${currentMBTI === 'INFP' ? 'selected' : ''}>INFP - 调停者</option>
+            <option value="ENFJ" ${currentMBTI === 'ENFJ' ? 'selected' : ''}>ENFJ - 主人公</option>
+            <option value="ENFP" ${currentMBTI === 'ENFP' ? 'selected' : ''}>ENFP - 竞选者</option>
+            <option value="ISTJ" ${currentMBTI === 'ISTJ' ? 'selected' : ''}>ISTJ - 物流师</option>
+            <option value="ISFJ" ${currentMBTI === 'ISFJ' ? 'selected' : ''}>ISFJ - 守卫者</option>
+            <option value="ESTJ" ${currentMBTI === 'ESTJ' ? 'selected' : ''}>ESTJ - 总经理</option>
+            <option value="ESFJ" ${currentMBTI === 'ESFJ' ? 'selected' : ''}>ESFJ - 执政官</option>
+            <option value="ISTP" ${currentMBTI === 'ISTP' ? 'selected' : ''}>ISTP - 鉴赏家</option>
+            <option value="ISFP" ${currentMBTI === 'ISFP' ? 'selected' : ''}>ISFP - 探险家</option>
+            <option value="ESTP" ${currentMBTI === 'ESTP' ? 'selected' : ''}>ESTP - 企业家</option>
+            <option value="ESFP" ${currentMBTI === 'ESFP' ? 'selected' : ''}>ESFP - 表演者</option>
+        `;
+        
+        const modalHtml = `
+            <div class="modal fade" id="mbitAssignModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">设置MBTI</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label">选择MBTI类型</label>
+                                <select class="form-select" id="mbitSelect">
+                                    ${mbtiOptions}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                            <button type="button" class="btn btn-warning" onclick="saveUserMBTI(${userId})">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // 移除旧的模态框
+        const oldModal = document.getElementById('mbitAssignModal');
+        if (oldModal) {
+            oldModal.remove();
+        }
+        
+        // 添加新的模态框
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('mbitAssignModal'));
+        modal.show();
+        
+    } catch (error) {
+        console.error('设置MBTI失败:', error);
+        showError('设置MBTI失败: ' + error.message);
+    }
+}
+
+async function saveUserMBTI(userId) {
+    try {
+        const mbitSelect = document.getElementById('mbitSelect');
+        const mbitValue = mbitSelect.value;
+        // 如果选择的是"未设置"（空字符串），发送 null；否则发送选中的值
+        const mbit = mbitValue === '' ? null : mbitValue;
+        
+        // 如果选择的是"未设置"，需要特殊处理（因为字段可能不允许 NULL）
+        // 这里先尝试发送 null，如果失败，后端会跳过更新
+        const response = await fetch(`${API_BASE}/users/${userId}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ mbit: mbit })
+        });
+        
+        // 检查响应状态
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('服务器错误响应:', errorText);
+            throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showSuccess('MBTI设置成功');
+            bootstrap.Modal.getInstance(document.getElementById('mbitAssignModal')).hide();
+            clearCache('users'); // 清除缓存，强制刷新
+            loadUsers(true); // 重新加载用户列表
+        } else {
+            showError('MBTI设置失败: ' + (data.message || '未知错误'));
+        }
+    } catch (error) {
+        console.error('保存用户MBTI失败:', error);
+        showError('保存用户MBTI失败: ' + error.message);
     }
 }
 
