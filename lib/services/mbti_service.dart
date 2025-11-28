@@ -1,7 +1,7 @@
 import 'api_client.dart';
 
 class MBTIService {
-  /// 获取MBTI性格分析
+  /// 获取职业发展规划建议
   static Future<Map<String, dynamic>?> getMBTIAnalysis({
     DateTime? startTime,
     DateTime? endTime,
@@ -31,7 +31,7 @@ class MBTIService {
       }
       return null;
     } catch (e) {
-      print('获取MBTI分析失败: $e');
+      print('获取职业规划失败: $e');
       return null;
     }
   }

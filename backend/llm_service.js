@@ -151,10 +151,10 @@ ${topKeywords}
 }
 
 /**
- * 根据MBTI类型生成发展建议
+ * 根据MBTI类型和关键词生成发展建议
  * @param {string} mbti - MBTI类型
  * @param {Array<string>} keywords - 关键词列表（用于个性化建议）
- * @returns {Promise<{suggestions: Array<string>, summary: string}>}
+ * @returns {Promise<{suggestions: Array<string>, summary: string, whySuitable: string}>}
  */
 async function generateDevelopmentSuggestions(mbti, keywords) {
   if (!mbti) {
@@ -169,28 +169,33 @@ async function generateDevelopmentSuggestions(mbti, keywords) {
 
   const topKeywords = Object.entries(keywordCounts)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([word]) => word)
+    .slice(0, 15)
+    .map(([word, count]) => `${word}(${count}次)`)
     .join('、');
 
   const prompt = `你是一位专业的职业发展顾问。请根据用户的MBTI性格类型（${mbti}）和其日志关键词，提供个性化的发展建议。
 
 用户MBTI类型：${mbti}
-用户主要关注领域：${topKeywords || '未明确'}
+用户主要关注领域和关键词（按出现频率排序）：${topKeywords || '未明确'}
 
 请按照以下格式返回建议（必须是有效的JSON格式，不要包含其他文字）：
 {
   "suggestions": [
-    "建议1（50-80字）",
-    "建议2（50-80字）",
-    "建议3（50-80字）",
-    "建议4（50-80字）",
-    "建议5（50-80字）"
+    "建议1（每条建议100-150字，要具体、可操作，结合用户的MBTI特点和关注领域）",
+    "建议2（每条建议100-150字，要具体、可操作，结合用户的MBTI特点和关注领域）",
+    "建议3（每条建议100-150字，要具体、可操作，结合用户的MBTI特点和关注领域）",
+    "建议4（每条建议100-150字，要具体、可操作，结合用户的MBTI特点和关注领域）",
+    "建议5（每条建议100-150字，要具体、可操作，结合用户的MBTI特点和关注领域）"
   ],
-  "summary": "总结性建议（100-150字）"
+  "summary": "总结性建议（200-300字，概括性地说明这些建议如何帮助用户发展）",
+  "whySuitable": "为什么这些建议适合你（300-400字，详细说明为什么基于你的MBTI类型（${mbti}）和关注领域（${topKeywords || '未明确'}），这些建议特别适合你，要结合MBTI的性格特点和用户的实际关注点进行深入分析）"
 }
 
-建议要具体、实用，结合用户的MBTI特点和关注领域。`;
+要求：
+1. 建议要具体、实用、可操作，不能是空泛的套话
+2. 每条建议都要结合用户的MBTI类型特点和关注领域
+3. "为什么适合你"部分要深入分析，说明MBTI类型与建议的匹配度
+4. 字数要充足，不要过于简短`;
 
   try {
     const response = await callQwen(prompt);
@@ -219,6 +224,7 @@ async function generateDevelopmentSuggestions(mbti, keywords) {
     return {
       suggestions: result.suggestions || [],
       summary: result.summary || '',
+      whySuitable: result.whySuitable || '',
     };
   } catch (error) {
     console.error('[LLM] 发展建议生成失败:', error);

@@ -60,6 +60,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _openServerSettings() async {
+    if (!mounted) return;
     final controller = TextEditingController(text: _currentHost);
     final result = await showDialog<String>(
       context: context,
@@ -88,6 +89,7 @@ class _LoginPageState extends State<LoginPage> {
     );
     controller.dispose();
 
+    if (!mounted) return;
     if (result != null && result.isNotEmpty) {
       await ServerConfig.setHost(result);
       await _loadCurrentHost();

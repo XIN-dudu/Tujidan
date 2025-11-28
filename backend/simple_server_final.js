@@ -1212,7 +1212,7 @@ app.get('/api/verify', async (req, res) => {
     const connection = await mysql.createConnection(dbConfig);
 
     const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at, department_id FROM users WHERE id = ? AND status = 1',
+      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at, department_id, mbit FROM users WHERE id = ? AND status = 1',
       [decoded.userId]
     );
 
@@ -1237,7 +1237,8 @@ app.get('/api/verify', async (req, res) => {
         position: user.position,
         avatarUrl: user.avatar_url,
         createdAt: user.created_at,
-        departmentId: user.department_id
+        departmentId: user.department_id,
+        mbti: user.mbit
       }
     });
 
@@ -1593,7 +1594,7 @@ app.post('/api/user/avatar', auth, upload.single('avatar'), async (req, res) => 
 // 更新用户信息接口
 app.put('/api/user/profile', auth, async (req, res) => {
   try {
-    const { username, password, email, phone } = req.body;
+    const { username, password, email, phone, mbti } = req.body;
     const userId = req.user.id;
     const connection = await getConn();
 
@@ -1657,6 +1658,28 @@ app.put('/api/user/profile', auth, async (req, res) => {
       updateValues.push(phone && phone.trim().length > 0 ? phone.trim() : null);
     }
 
+    // 更新MBTI
+    if (mbti !== undefined) {
+      // 验证MBTI值是否在允许的枚举值中
+      const validMbtiValues = ['INTJ', 'INTP', 'ENTJ', 'ENTP', 'INFJ', 'INFP', 'ENFJ', 'ENFP', 'ISTJ', 'ISFJ', 'ESTJ', 'ESFJ', 'ISTP', 'ISFP', 'ESTP', 'ESFP'];
+      if (mbti && mbti.trim().length > 0) {
+        const mbtiUpper = mbti.trim().toUpperCase();
+        if (!validMbtiValues.includes(mbtiUpper)) {
+          await connection.end();
+          return res.status(400).json({ 
+            success: false, 
+            message: 'MBTI类型无效' 
+          });
+        }
+        updateFields.push('mbit = ?');
+        updateValues.push(mbtiUpper);
+      } else {
+        // 允许设置为null
+        updateFields.push('mbit = ?');
+        updateValues.push(null);
+      }
+    }
+
     // 更新密码
     if (password !== undefined) {
       if (password.length < 6) {
@@ -1691,7 +1714,7 @@ app.put('/api/user/profile', auth, async (req, res) => {
 
     // 获取更新后的用户信息
     const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url, created_at FROM users WHERE id = ?',
+      'SELECT id, username, email, real_name, phone, position, avatar_url, created_at, department_id, mbit FROM users WHERE id = ?',
       [userId]
     );
 
@@ -1716,7 +1739,9 @@ app.put('/api/user/profile', auth, async (req, res) => {
         phone: user.phone,
         position: user.position,
         avatarUrl: user.avatar_url,
-        createdAt: user.created_at
+        createdAt: user.created_at,
+        departmentId: user.department_id,
+        mbti: user.mbit
       }
     });
   } catch (error) {
@@ -2269,7 +2294,7 @@ app.get('/api/user/permissions', auth, async (req, res) => {
  * @swagger
  * /api/user/mbti-analysis:
  *   get:
- *     summary: 根据用户日志关键词生成MBTI性格分析
+ *     summary: 根据用户MBTI和关键词生成发展建议
  *     tags: [用户管理]
  *     security:
  *       - bearerAuth: []
@@ -2288,7 +2313,7 @@ app.get('/api/user/permissions', auth, async (req, res) => {
  *         description: 结束时间（可选，不传则分析所有日志）
  *     responses:
  *       200:
- *         description: 分析成功
+ *         description: 生成成功
  *         content:
  *           application/json:
  *             schema:
@@ -2299,23 +2324,18 @@ app.get('/api/user/permissions', auth, async (req, res) => {
  *                 data:
  *                   type: object
  *                   properties:
- *                     mbti:
- *                       type: string
- *                       example: INTJ
- *                     analysis:
- *                       type: string
- *                     traits:
+ *                     suggestions:
  *                       type: array
  *                       items:
  *                         type: string
- *                     confidence:
+ *                     summary:
  *                       type: string
- *                     keywords:
+ *                     whySuitable:
  *                       type: string
  *       400:
  *         description: 参数错误或关键词不足
  */
-// 根据用户日志关键词生成MBTI分析
+// 根据用户MBTI和关键词生成发展建议
 app.get('/api/user/mbti-analysis', auth, async (req, res) => {
   try {
     const { startTime, endTime, force } = req.query;
@@ -2324,10 +2344,27 @@ app.get('/api/user/mbti-analysis', auth, async (req, res) => {
     if (!force) {
       const cached = await getMbtiCache(req.user.id, 'analysis');
       if (cached) {
-        return res.json({ success: true, data: cached, message: 'MBTI分析读取缓存' });
+        return res.json({ success: true, data: cached, message: '发展建议读取缓存' });
       }
     }
     const connection = await getConn();
+
+    // 获取用户的MBTI，如果没有则返回错误
+    const [userRows] = await connection.execute(
+      'SELECT mbit FROM users WHERE id = ?',
+      [req.user.id]
+    );
+    const userMbti = userRows[0]?.mbit;
+    
+    if (!userMbti || userMbti.trim() === '') {
+      await connection.end();
+      return res.status(400).json({
+        success: false,
+        message: '请先在个人信息中设置您的MBTI类型'
+      });
+    }
+    
+    const mbtiUpper = userMbti.trim().toUpperCase();
 
     // 获取用户的关键词
     let sql = `
@@ -2346,56 +2383,30 @@ app.get('/api/user/mbti-analysis', auth, async (req, res) => {
     sql += ' ORDER BY lk.score DESC';
 
     const [rows] = await connection.execute(sql, params);
-
-    let analysis;
-    if (rows.length > 0) {
-      // 已有关键词，正常走关键词分析
-      const keywords = rows.map(row => row.keyword);
-      analysis = await generateMBTIAnalysis(keywords);
-    } else {
-      // 没有关键词：回退到“日志原文分析”
-      const [logRows] = await connection.execute(
-        `SELECT COALESCE(title,'') AS title, COALESCE(content,'') AS content
-         FROM logs
-         WHERE author_user_id = ?
-         ${startTime && endTime ? 'AND time_from >= ? AND time_from <= ?' : ''}
-         ORDER BY created_at DESC
-         LIMIT 50`,
-        startTime && endTime ? [req.user.id, startTime, endTime] : [req.user.id]
-      );
-
-      const logsText = (logRows || [])
-        .map(r => `${r.title} ${r.content}`.trim())
-        .filter(s => s && s.length > 0)
-        .join('\n');
-
-      if (!logsText || logsText.length < 10) {
-        await connection.end();
-        return res.status(400).json({
-          success: false,
-          message: '没有足够的日志数据用于分析，请先记录一些日志'
-        });
-      }
-
-      const { generateMBTIFromLogsText } = require('./llm_service');
-      analysis = await generateMBTIFromLogsText(logsText);
-    }
-
     await connection.end();
+
+    // 提取关键词
+    const keywords = rows.length > 0 
+      ? rows.map(row => row.keyword)
+      : [];
+
+    // 调用大模型生成发展建议
+    const { generateDevelopmentSuggestions } = require('./llm_service');
+    const suggestions = await generateDevelopmentSuggestions(mbtiUpper, keywords);
 
     res.json({
       success: true,
-      data: analysis,
-      message: 'MBTI分析生成成功'
+      data: suggestions,
+      message: '发展建议生成成功'
     });
 
     // 写入缓存（异步，不阻塞响应）
-    setMbtiCache(req.user.id, 'analysis', analysis).catch(() => {});
+    setMbtiCache(req.user.id, 'analysis', suggestions).catch(() => {});
   } catch (e) {
-    console.error('生成MBTI分析失败:', e);
+    console.error('生成发展建议失败:', e);
     res.status(500).json({
       success: false,
-      message: '生成MBTI分析失败: ' + e.message
+      message: '生成发展建议失败: ' + e.message
     });
   }
 });
@@ -3665,8 +3676,8 @@ app.post('/api/tasks', auth, async (req, res) => {
           const notificationTitle = `您有一个新任务: ${name}`;
           const notificationContent = `创建者: ${req.user.username}`;
           await connection.execute(
-            'INSERT INTO notifications (user_id, type, title, content, related_id) VALUES (?, ?, ?, ?, ?)',
-            [finalAssigneeId, 'task_assigned', notificationTitle, notificationContent, result.insertId]
+            "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
+            [finalAssigneeId, 'assignment', notificationTitle, notificationContent, result.insertId]
           );
         }
 

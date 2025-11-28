@@ -157,18 +157,27 @@ class _QuadrantPageState extends State<QuadrantPage> {
       });
     }
 
-    final response = await DashboardService.getDashboardLogs();
-    if (!mounted) return;
-    if (response.success && response.data != null) {
+    try {
+      final response = await DashboardService.getDashboardLogs();
+      if (!mounted) return;
+      if (response.success && response.data != null) {
+        setState(() {
+          _dashboardLogs = response.data!;
+          _loadingLogs = false;
+          _logError = null;
+        });
+      } else {
+        setState(() {
+          _loadingLogs = false;
+          _logError = response.message.isNotEmpty ? response.message : '加载失败';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      print('加载日志失败: $e');
       setState(() {
-        _dashboardLogs = response.data!;
         _loadingLogs = false;
-        _logError = null;
-      });
-    } else {
-      setState(() {
-        _loadingLogs = false;
-        _logError = response.message.isNotEmpty ? response.message : '加载失败';
+        _logError = '加载失败: $e';
       });
     }
   }
@@ -419,17 +428,27 @@ class _QuadrantPageState extends State<QuadrantPage> {
       _companyTaskError = null;
     });
 
-    final response = await DashboardService.getDashboardTasks();
-    if (!mounted) return;
-    if (response.success && response.data != null) {
+    try {
+      final response = await DashboardService.getDashboardTasks();
+      if (!mounted) return;
+      if (response.success && response.data != null) {
+        setState(() {
+          _companyTasks = response.data!;
+          _loadingCompanyTasks = false;
+          _companyTaskError = null;
+        });
+      } else {
+        setState(() {
+          _loadingCompanyTasks = false;
+          _companyTaskError = response.message.isNotEmpty ? response.message : '加载失败';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      print('加载任务失败: $e');
       setState(() {
-        _companyTasks = response.data!;
         _loadingCompanyTasks = false;
-      });
-    } else {
-      setState(() {
-        _loadingCompanyTasks = false;
-        _companyTaskError = response.message.isNotEmpty ? response.message : '加载失败';
+        _companyTaskError = '加载失败: $e';
       });
     }
   }
@@ -1071,7 +1090,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
               children: [
                 const Expanded(
                   child: Text(
-                    '公司十大重要展示项',
+                    '公司十大',
                     style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
                   ),
                 ),
@@ -1207,7 +1226,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
               children: [
                 const Expanded(
                   child: Text(
-                    '公司十大派发任务',
+                    '十大任务',
                     style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
                   ),
                 ),
@@ -1357,7 +1376,7 @@ class _QuadrantPageState extends State<QuadrantPage> {
               children: [
                 const Expanded(
                   child: Text(
-                    '个人十大重要展示项',
+                    '个人十大',
                     style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.normal),
                   ),
                 ),

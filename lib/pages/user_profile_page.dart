@@ -29,10 +29,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
   bool _isLoading = true;
   bool _isUploading = false;
   
-  // MBTI相关状态
+  // 职业规划相关状态
   Map<String, dynamic>? _mbtiAnalysis;
   bool _isLoadingMBTI = false;
-  bool _isLoadingSuggestions = false;
   String _fileBaseUrl = 'http://127.0.0.1:3001';
 
   @override
@@ -88,67 +87,44 @@ class _UserProfilePageState extends State<UserProfilePage> {
     setState(() => _isLoadingMBTI = true);
     
     try {
-      final analysis = await MBTIService.getMBTIAnalysis(force: force);
+      final suggestions = await MBTIService.getMBTIAnalysis(force: force);
       if (mounted) {
         setState(() {
-          _mbtiAnalysis = analysis;
+          _mbtiAnalysis = suggestions;
           _isLoadingMBTI = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoadingMBTI = false);
-        // 静默失败，不显示错误提示（因为可能没有关键词数据）
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('获取职业规划失败: $e')),
+        );
       }
     }
   }
 
   Future<void> _showDevelopmentSuggestions() async {
-    if (_mbtiAnalysis == null || _mbtiAnalysis!['mbti'] == null) {
+    if (_mbtiAnalysis == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先获取MBTI分析')),
+        const SnackBar(content: Text('请先获取职业规划')),
       );
       return;
     }
 
-    final mbti = _mbtiAnalysis!['mbti'] as String;
-    
-    if (!mounted) return;
-    setState(() => _isLoadingSuggestions = true);
-
-    try {
-      final suggestions = await MBTIService.getDevelopmentSuggestions(mbti: mbti);
-      
-      if (!mounted) return;
-      setState(() => _isLoadingSuggestions = false);
-
-      if (suggestions == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('获取发展建议失败')),
-        );
-        return;
-      }
-
-      // 显示发展建议对话框
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => _buildSuggestionsDialog(suggestions),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingSuggestions = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('获取发展建议失败: $e')),
-        );
-      }
+    // 显示发展建议对话框
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => _buildSuggestionsDialog(_mbtiAnalysis!),
+      );
     }
   }
 
   Widget _buildSuggestionsDialog(Map<String, dynamic> suggestions) {
     final suggestionsList = suggestions['suggestions'] as List<dynamic>? ?? [];
     final summary = suggestions['summary'] as String? ?? '';
+    final whySuitable = suggestions['whySuitable'] as String? ?? '';
 
     return Dialog(
       child: Container(
@@ -162,7 +138,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'AI发展建议',
+                  '职业发展规划',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -180,9 +156,17 @@ class _UserProfilePageState extends State<UserProfilePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (summary.isNotEmpty) ...[
+                    if (whySuitable.isNotEmpty) ...[
+                      const Text(
+                        '为什么这些建议适合你：',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       Text(
-                        summary,
+                        whySuitable,
                         style: const TextStyle(
                           fontSize: 14,
                           height: 1.5,
@@ -239,6 +223,24 @@ class _UserProfilePageState extends State<UserProfilePage> {
                           ),
                         );
                       }),
+                    ],
+                    if (summary.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      const Text(
+                        '总结：',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        summary,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -466,6 +468,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final departmentText = (departmentIdRaw != null && departmentIdRaw.isNotEmpty)
         ? departmentIdRaw
         : '未设置';
+    final mbti = (_userInfo!['mbti'] ?? '').toString();
+    final mbtiText = mbti.isNotEmpty ? mbti : '未设置';
     final createdAtRaw = _userInfo!['created_at'];
     DateTime? createdAt;
     if (createdAtRaw != null) {
@@ -540,6 +544,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
             const SizedBox(height: 8),
             _buildInfoRow('所属部门', departmentText),
             const SizedBox(height: 8),
+            _buildInfoRow('MBTI', mbtiText),
+            const SizedBox(height: 8),
             _buildInfoRow('建号时间', createdAtText),
             const SizedBox(height: 24),
             // 修改信息按钮
@@ -605,10 +611,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
               children: [
                 const Row(
                   children: [
-                    Icon(Icons.psychology, color: Colors.blue),
+                    Icon(Icons.trending_up, color: Colors.blue),
                     SizedBox(width: 8),
                     Text(
-                      '性格分析',
+                      '职业规划',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -626,7 +632,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   IconButton(
                     icon: const Icon(Icons.refresh),
                     onPressed: () => _loadMBTIAnalysis(force: true),
-                    tooltip: '刷新分析',
+                    tooltip: '刷新规划',
                     iconSize: 20,
                   ),
               ],
@@ -648,75 +654,29 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       const Icon(Icons.info_outline, size: 48, color: Colors.grey),
                       const SizedBox(height: 12),
                       const Text(
-                        '暂无分析数据',
+                        '暂无规划数据',
                         style: TextStyle(color: Colors.grey),
                       ),
                       const SizedBox(height: 8),
                       TextButton(
                         onPressed: () => _loadMBTIAnalysis(force: true),
-                        child: const Text('重新加载'),
+                        child: const Text('生成职业规划'),
                       ),
                     ],
                   ),
                 ),
               )
             else ...[
-              // MBTI类型
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.blue, width: 2),
-                    ),
-                    child: Text(
-                      _mbtiAnalysis!['mbti'] ?? '未知',
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '可信度: ${_mbtiAnalysis!['confidence'] ?? '中'}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              // 性格特征
-              if (_mbtiAnalysis!['traits'] != null)
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: (_mbtiAnalysis!['traits'] as List<dynamic>)
-                      .map((trait) => Chip(
-                            label: Text(trait.toString()),
-                            backgroundColor: Colors.blue[50],
-                            side: BorderSide(color: Colors.blue[200]!),
-                          ))
-                      .toList(),
-                ),
-              const SizedBox(height: 16),
-              // 分析说明
-              if (_mbtiAnalysis!['analysis'] != null)
+              // 显示发展建议摘要
+              if (_mbtiAnalysis!['summary'] != null)
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.grey[50],
+                    color: Colors.blue[50],
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    _mbtiAnalysis!['analysis'] as String,
+                    _mbtiAnalysis!['summary'] as String,
                     style: const TextStyle(
                       fontSize: 14,
                       height: 1.5,
@@ -724,19 +684,13 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ),
                 ),
               const SizedBox(height: 16),
-              // 查看发展建议按钮
+              // 查看完整建议按钮
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: _isLoadingSuggestions ? null : _showDevelopmentSuggestions,
-                  icon: _isLoadingSuggestions
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.lightbulb_outline),
-                  label: Text(_isLoadingSuggestions ? '生成中...' : '查看发展建议'),
+                  onPressed: _showDevelopmentSuggestions,
+                  icon: const Icon(Icons.lightbulb_outline),
+                  label: const Text('查看完整规划建议'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.orange[50],
                     foregroundColor: Colors.orange[700],
@@ -766,11 +720,24 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
     final passwordController = TextEditingController();
     final confirmPasswordController = TextEditingController();
+    
+    // MBTI选项列表
+    const List<String> mbtiOptions = [
+      'INTJ', 'INTP', 'ENTJ', 'ENTP',
+      'INFJ', 'INFP', 'ENFJ', 'ENFP',
+      'ISTJ', 'ISFJ', 'ESTJ', 'ESFJ',
+      'ISTP', 'ISFP', 'ESTP', 'ESFP',
+    ];
+    
+    // 初始化MBTI值
+    final initialMbti = (_userInfo!['mbti'] ?? '').toString();
+    final initialMbtiValue = initialMbti.isNotEmpty ? initialMbti : null;
 
     // 用于控制密码输入框的显示
     bool showPasswordFields = false;
     bool isSubmitting = false;
     String? errorMessage;
+    String? selectedMbti = initialMbtiValue;
 
     await showDialog(
       context: context,
@@ -824,6 +791,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
               password: showPasswordFields && passwordController.text.isNotEmpty
                   ? passwordController.text
                   : null,
+              mbti: selectedMbti,
             );
 
             if (!mounted) return;
@@ -909,6 +877,31 @@ class _UserProfilePageState extends State<UserProfilePage> {
                       ),
                       keyboardType: TextInputType.emailAddress,
                       textInputAction: TextInputAction.next,
+                    ),
+                    const SizedBox(height: 16),
+                    // MBTI选择
+                    DropdownButtonFormField<String>(
+                      value: selectedMbti,
+                      decoration: const InputDecoration(
+                        labelText: 'MBTI',
+                        border: OutlineInputBorder(),
+                        hintText: '请选择MBTI类型（可选）',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('未设置'),
+                        ),
+                        ...mbtiOptions.map((mbti) => DropdownMenuItem<String>(
+                          value: mbti,
+                          child: Text(mbti),
+                        )),
+                      ],
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedMbti = value;
+                        });
+                      },
                     ),
                     const SizedBox(height: 16),
                     // 修改密码开关

@@ -72,6 +72,7 @@ class UserService {
             'department_id': user['departmentId'] ?? user['department_id'],
           'avatar_url': avatarUrl, // 转换小驼峰为下划线
           'created_at': user['createdAt'] ?? user['created_at'],
+          'mbti': user['mbti'],
           };
         }
       }
@@ -253,6 +254,7 @@ class UserService {
     String? password,
     String? email,
     String? phone,
+    String? mbti,
   }) async {
     try {
       final String? token = await _getToken();
@@ -268,6 +270,7 @@ class UserService {
       if (password != null && password.isNotEmpty) body['password'] = password;
       if (email != null) body['email'] = email;
       if (phone != null) body['phone'] = phone;
+      if (mbti != null) body['mbti'] = mbti;
 
       final baseUrl = await ServerConfig.getBaseUrl();
       final response = await http.put(
@@ -294,6 +297,7 @@ class UserService {
           'department_id': user['departmentId'] ?? user['department_id'],
           'avatar_url': user['avatarUrl'],
           'created_at': user['createdAt'],
+          'mbti': user['mbti'],
         };
         return ApiResponse(
           success: true,
