@@ -1755,6 +1755,46 @@ app.put('/api/user/profile', auth, async (req, res) => {
 
 // ---- Log & Task Images ----
 
+/**
+ * @swagger
+ * /api/logs/{id}/images:
+ *   post:
+ *     summary: 为日志上传图片
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - images
+ *             properties:
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: 要上传的图片文件（最多 9 张，单张最大 5MB）
+ *     responses:
+ *       200:
+ *         description: 上传成功
+ *       400:
+ *         description: 日志ID无效或未选择文件
+ *       403:
+ *         description: 没有权限上传该日志的图片
+ *       404:
+ *         description: 日志不存在
+ */
 app.post('/api/logs/:id/images', auth, upload.array('images', MAX_IMAGES_PER_REQUEST), async (req, res) => {
   const logId = parseInt(req.params.id, 10);
   if (!Number.isFinite(logId)) {
@@ -1816,6 +1856,31 @@ app.post('/api/logs/:id/images', auth, upload.array('images', MAX_IMAGES_PER_REQ
   }
 });
 
+/**
+ * @swagger
+ * /api/logs/{id}/images:
+ *   get:
+ *     summary: 获取日志图片列表
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *       400:
+ *         description: 日志ID无效
+ *       403:
+ *         description: 没有权限查看该日志的图片
+ *       404:
+ *         description: 日志不存在
+ */
 app.get('/api/logs/:id/images', auth, async (req, res) => {
   const logId = parseInt(req.params.id, 10);
   if (!Number.isFinite(logId)) {
@@ -1848,6 +1913,46 @@ app.get('/api/logs/:id/images', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}/images:
+ *   post:
+ *     summary: 为任务上传图片
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - images
+ *             properties:
+ *               images:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: 要上传的图片文件（最多 9 张，单张最大 5MB）
+ *     responses:
+ *       200:
+ *         description: 上传成功
+ *       400:
+ *         description: 任务ID无效或未选择文件
+ *       403:
+ *         description: 没有权限上传该任务的图片
+ *       404:
+ *         description: 任务不存在
+ */
 app.post('/api/tasks/:id/images', auth, upload.array('images', MAX_IMAGES_PER_REQUEST), async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
   if (!Number.isFinite(taskId)) {
@@ -1913,6 +2018,31 @@ app.post('/api/tasks/:id/images', auth, upload.array('images', MAX_IMAGES_PER_RE
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}/images:
+ *   get:
+ *     summary: 获取任务图片列表
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *       400:
+ *         description: 任务ID无效
+ *       403:
+ *         description: 没有权限查看该任务的图片
+ *       404:
+ *         description: 任务不存在
+ */
 app.get('/api/tasks/:id/images', auth, async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
   if (!Number.isFinite(taskId)) {
@@ -2638,6 +2768,23 @@ app.get('/api/personal/top-items', auth, async (req, res) => {
  *     tags: [系统]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 description: 展示项标题
+ *                 example: 本周最重要的目标
+ *               content:
+ *                 type: string
+ *                 description: 展示项内容（可选）
+ *                 example: 本周完成项目接口测试与报告编写
  */
 app.post('/api/personal/top-items', auth, async (req, res) => {
   try {
@@ -2703,6 +2850,33 @@ app.post('/api/personal/top-items', auth, async (req, res) => {
  *     tags: [系统]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 展示项ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 description: 展示项标题
+ *               content:
+ *                 type: string
+ *                 description: 展示项内容
+ *               status:
+ *                 type: integer
+ *                 enum: [0, 1]
+ *                 description: 状态（0=不展示, 1=展示）
+ *               orderIndex:
+ *                 type: integer
+ *                 description: 排序值
  */
 app.patch('/api/personal/top-items/:id', auth, async (req, res) => {
   try {
@@ -2806,6 +2980,20 @@ app.patch('/api/personal/top-items/:id', auth, async (req, res) => {
  *     tags: [系统]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 展示项ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       400:
+ *         description: 参数无效
+ *       404:
+ *         description: 记录不存在
  */
 app.delete('/api/personal/top-items/:id', auth, async (req, res) => {
   try {
@@ -2915,6 +3103,19 @@ app.get('/api/dashboard/logs', auth, async (req, res) => {
  *     tags: [日志管理]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - logId
+ *             properties:
+ *               logId:
+ *                 type: integer
+ *                 description: 要固定到仪表盘的日志ID
+ *                 example: 1
  */
 app.post('/api/dashboard/logs', auth, async (req, res) => {
   try {
@@ -3053,6 +3254,19 @@ app.get('/api/dashboard/tasks', auth, async (req, res) => {
  *     tags: [任务管理]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - taskId
+ *             properties:
+ *               taskId:
+ *                 type: integer
+ *                 description: 要固定到仪表盘的任务ID
+ *                 example: 1
  */
 app.post('/api/dashboard/tasks', auth, async (req, res) => {
   try {
