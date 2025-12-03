@@ -3,6 +3,8 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
 
 const app = express();
 const PORT = process.env.PORT || 3002; // 使用不同端口
@@ -22,6 +24,108 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+// Swagger 配置
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Tujidan 管理后台 API',
+      version: '1.0.0',
+      description: 'Tujidan 管理后台 API 文档 - 用户、角色、权限、任务、日志管理',
+      contact: {
+        name: 'API Support',
+      },
+    },
+    servers: [
+      {
+        url: 'http://localhost:3002',
+        description: '开发环境',
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
+      schemas: {
+        User: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            username: { type: 'string' },
+            email: { type: 'string' },
+            real_name: { type: 'string' },
+            phone: { type: 'string' },
+            position: { type: 'string' },
+            avatar_url: { type: 'string' },
+            status: { type: 'integer' },
+            department_id: { type: 'integer' },
+            mbit: { type: 'string' },
+            created_at: { type: 'string', format: 'date-time' },
+          },
+        },
+        Task: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+            status: { type: 'string' },
+            progress: { type: 'integer', minimum: 0, maximum: 100 },
+            assigneeId: { type: 'integer' },
+            dueTime: { type: 'string', format: 'date-time' },
+          },
+        },
+        Log: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            title: { type: 'string' },
+            content: { type: 'string' },
+            logType: { type: 'string', enum: ['work', 'study', 'life', 'other'] },
+            priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+            logStatus: { type: 'string', enum: ['pending', 'completed', 'cancelled'] },
+            progress: { type: 'integer', minimum: 0, maximum: 100 },
+            timeFrom: { type: 'string', format: 'date-time' },
+            timeTo: { type: 'string', format: 'date-time' },
+            taskId: { type: 'integer' },
+          },
+        },
+      },
+    },
+    security: [
+      {
+        bearerAuth: [],
+      },
+    ],
+    tags: [
+      { name: '系统', description: '系统健康检查' },
+      { name: '认证相关', description: '用户注册、登录、验证' },
+      { name: '用户管理', description: '用户 CRUD 操作' },
+      { name: '角色权限', description: 'RBAC 角色和权限管理' },
+      { name: '任务管理', description: '任务 CRUD 操作' },
+      { name: '日志管理', description: '日志查看和删除' },
+      { name: 'TopItems', description: '公司十大事项管理' },
+    ],
+  },
+  apis: ['./backend/admin-server.js'],
+};
+
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+// 添加 Swagger UI 路由
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// 提供 JSON 格式的文档
+app.get('/api-docs.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
 
 // 添加请求日志中间件
 app.use((req, res, next) => {
@@ -185,6 +289,31 @@ function checkPermission(permission) {
   };
 }
 
+/**
+ * @swagger
+ * /api/health:
+ *   get:
+ *     summary: 健康检查
+ *     tags: [系统]
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: 服务器运行正常
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 管理后台服务器运行正常
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ */
 // 健康检查接口
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -194,6 +323,70 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+/**
+ * @swagger
+ * /api/register:
+ *   post:
+ *     summary: 注册/创建用户（管理员功能）
+ *     tags: [认证相关]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - password
+ *               - realName
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名
+ *                 example: testuser
+ *               password:
+ *                 type: string
+ *                 description: 密码
+ *                 example: password123
+ *               email:
+ *                 type: string
+ *                 description: 邮箱（可选）
+ *                 example: test@example.com
+ *               realName:
+ *                 type: string
+ *                 description: 真实姓名
+ *                 example: 张三
+ *               phone:
+ *                 type: string
+ *                 description: 手机号（可选）
+ *                 example: 13800000000
+ *               position:
+ *                 type: string
+ *                 description: 职位（可选）
+ *                 example: 开发工程师
+ *     responses:
+ *       201:
+ *         description: 用户创建成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 用户创建成功
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: 参数错误或用户名已存在
+ *       409:
+ *         description: 用户名已存在
+ */
 // 注册/创建用户接口
 app.post('/api/register', auth, async (req, res) => {
   try {
@@ -261,6 +454,55 @@ app.post('/api/register', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/login:
+ *   post:
+ *     summary: 用户登录（仅限 founder/admin）
+ *     tags: [认证相关]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - password
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 description: 用户名或邮箱
+ *                 example: admin
+ *               password:
+ *                 type: string
+ *                 description: 密码
+ *                 example: password123
+ *     responses:
+ *       200:
+ *         description: 登录成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 登录成功
+ *                 token:
+ *                   type: string
+ *                   example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       401:
+ *         description: 用户名或密码错误
+ *       403:
+ *         description: 没有权限登录管理后台（只有 founder/admin 可以登录）
+ */
 // 登录接口（复用主后端的逻辑）
 app.post('/api/login', async (req, res) => {
   try {
@@ -354,6 +596,30 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/verify:
+ *   get:
+ *     summary: 验证 Token
+ *     tags: [认证相关]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Token 有效
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Token 无效或未提供
+ */
 // 验证token接口
 app.get('/api/verify', async (req, res) => {
   try {
@@ -406,6 +672,56 @@ app.get('/api/verify', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/admin/users:
+ *   get:
+ *     summary: 获取所有用户列表（分页）
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *           minimum: 1
+ *         description: 页码
+ *       - in: query
+ *         name: pageSize
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           minimum: 1
+ *           maximum: 100
+ *         description: 每页数量
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 users:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/User'
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     page:
+ *                       type: integer
+ *                     pageSize:
+ *                       type: integer
+ *                     total:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ */
 // 管理员获取所有用户（登录后直接允许访问，提高响应速度）
 app.get('/api/admin/users', auth, async (req, res) => {
   try {
@@ -451,6 +767,28 @@ app.get('/api/admin/users', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/users/stats:
+ *   get:
+ *     summary: 获取用户统计信息
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 totalUsers:
+ *                   type: integer
+ *                   description: 总用户数
+ */
 // 用户统计接口
 app.get('/api/users/stats', auth, async (req, res) => {
   try {
@@ -467,6 +805,38 @@ app.get('/api/users/stats', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/users/{id}:
+ *   get:
+ *     summary: 获取单个用户详情
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 用户ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       403:
+ *         description: 权限不足
+ *       404:
+ *         description: 用户不存在
+ */
 // 获取单个用户详情
 app.get('/api/users/:id', auth, async (req, res) => {
   try {
@@ -581,6 +951,54 @@ async function fetchAllActiveUsers() {
   }
 }
 
+/**
+ * @swagger
+ * /api/users/{id}:
+ *   put:
+ *     summary: 更新用户信息
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 用户ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               username:
+ *                 type: string
+ *               realName:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               phone:
+ *                 type: string
+ *               position:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *                 description: 新密码（可选）
+ *               departmentId:
+ *                 type: integer
+ *                 description: 部门ID（可选）
+ *               mbit:
+ *                 type: string
+ *                 description: MBTI类型（可选）
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       400:
+ *         description: 没有要更新的字段
+ *       403:
+ *         description: 权限不足
+ */
 // 更新用户信息
 app.put('/api/users/:id', auth, async (req, res) => {
   try {
@@ -665,6 +1083,29 @@ app.put('/api/users/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/users/{id}:
+ *   delete:
+ *     summary: 删除用户（硬删除）
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 用户ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       403:
+ *         description: 权限不足或不能删除自己
+ *       404:
+ *         description: 用户不存在
+ */
 // 删除用户（硬删除）
 app.delete('/api/users/:id', auth, async (req, res) => {
   try {
@@ -745,6 +1186,43 @@ app.delete('/api/users/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/user-roles/{userId}:
+ *   get:
+ *     summary: 获取用户当前角色
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 用户ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 roles:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       role_name:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ */
 // 获取用户当前角色
 app.get('/api/user-roles/:userId', auth, async (req, res) => {
   try {
@@ -766,6 +1244,43 @@ app.get('/api/user-roles/:userId', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/user-roles/{userId}:
+ *   post:
+ *     summary: 为用户分配角色
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 用户ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - roleIds
+ *             properties:
+ *               roleIds:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *                 description: 角色ID列表
+ *     responses:
+ *       200:
+ *         description: 分配成功
+ *       400:
+ *         description: 角色ID列表格式错误
+ *       403:
+ *         description: 权限不足（需要 user:assign_role 权限）
+ */
 // 为用户分配角色
 app.post('/api/user-roles/:userId', auth, checkPermission('user:assign_role'), async (req, res) => {
   try {
@@ -798,6 +1313,43 @@ app.post('/api/user-roles/:userId', auth, checkPermission('user:assign_role'), a
   }
 });
 
+/**
+ * @swagger
+ * /api/roles:
+ *   get:
+ *     summary: 获取所有角色
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 roles:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       role_name:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *                       user_count:
+ *                         type: integer
+ *                       created_at:
+ *                         type: string
+ *                         format: date-time
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 获取所有角色
 app.get('/api/roles', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -818,6 +1370,42 @@ app.get('/api/roles', auth, checkPermission('role:view'), async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/permissions:
+ *   get:
+ *     summary: 获取所有权限
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 permissions:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       perm_key:
+ *                         type: string
+ *                       name:
+ *                         type: string
+ *                       module:
+ *                         type: string
+ *                       description:
+ *                         type: string
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 获取所有权限
 app.get('/api/permissions', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -835,6 +1423,48 @@ app.get('/api/permissions', auth, checkPermission('role:view'), async (req, res)
   }
 });
 
+/**
+ * @swagger
+ * /api/permissions:
+ *   post:
+ *     summary: 创建权限
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - permKey
+ *               - name
+ *               - module
+ *             properties:
+ *               permKey:
+ *                 type: string
+ *                 description: 权限键（唯一标识）
+ *                 example: user:create
+ *               name:
+ *                 type: string
+ *                 description: 权限名称
+ *                 example: 创建用户
+ *               module:
+ *                 type: string
+ *                 description: 所属模块
+ *                 example: 用户管理
+ *               description:
+ *                 type: string
+ *                 description: 权限描述（可选）
+ *     responses:
+ *       200:
+ *         description: 创建成功
+ *       400:
+ *         description: 参数错误或权限键已存在
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 创建权限
 app.post('/api/permissions', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -888,6 +1518,29 @@ app.post('/api/permissions', auth, checkPermission('role:view'), async (req, res
   }
 });
 
+/**
+ * @swagger
+ * /api/permissions/{id}:
+ *   delete:
+ *     summary: 删除权限
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 权限ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       404:
+ *         description: 权限不存在
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 删除权限
 app.delete('/api/permissions/:id', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -928,6 +1581,27 @@ app.delete('/api/permissions/:id', auth, checkPermission('role:view'), async (re
   }
 });
 
+/**
+ * @swagger
+ * /api/roles/{roleId}/permissions:
+ *   get:
+ *     summary: 获取角色的权限列表
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: roleId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 角色ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 获取角色的权限（用于编辑角色）
 app.get('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -950,6 +1624,38 @@ app.get('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), as
   }
 });
 
+/**
+ * @swagger
+ * /api/roles:
+ *   post:
+ *     summary: 创建角色
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - roleName
+ *             properties:
+ *               roleName:
+ *                 type: string
+ *                 description: 角色名称
+ *                 example: 部门经理
+ *               description:
+ *                 type: string
+ *                 description: 角色描述（可选）
+ *     responses:
+ *       200:
+ *         description: 创建成功
+ *       400:
+ *         description: 角色名称不能为空
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 创建角色
 app.post('/api/roles', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -983,6 +1689,37 @@ app.post('/api/roles', auth, checkPermission('role:view'), async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/roles/{id}:
+ *   put:
+ *     summary: 更新角色
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 角色ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               roleName:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 更新角色
 app.put('/api/roles/:id', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -1005,6 +1742,27 @@ app.put('/api/roles/:id', auth, checkPermission('role:view'), async (req, res) =
   }
 });
 
+/**
+ * @swagger
+ * /api/roles/{id}:
+ *   delete:
+ *     summary: 删除角色
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 角色ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 删除角色
 app.delete('/api/roles/:id', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -1029,6 +1787,43 @@ app.delete('/api/roles/:id', auth, checkPermission('role:view'), async (req, res
   }
 });
 
+/**
+ * @swagger
+ * /api/roles/{roleId}/permissions:
+ *   post:
+ *     summary: 为角色分配权限
+ *     tags: [角色权限]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: roleId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 角色ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - permissionIds
+ *             properties:
+ *               permissionIds:
+ *                 type: array
+ *                 items:
+ *                   type: integer
+ *                 description: 权限ID列表
+ *     responses:
+ *       200:
+ *         description: 分配成功
+ *       400:
+ *         description: 权限ID列表格式错误
+ *       403:
+ *         description: 权限不足（需要 role:view 权限）
+ */
 // 为角色分配权限
 app.post('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), async (req, res) => {
   try {
@@ -1060,6 +1855,36 @@ app.post('/api/roles/:roleId/permissions', auth, checkPermission('role:view'), a
   }
 });
 
+/**
+ * @swagger
+ * /api/logs/{id}:
+ *   get:
+ *     summary: 获取单个日志详情
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 log:
+ *                   $ref: '#/components/schemas/Log'
+ *       404:
+ *         description: 日志不存在
+ */
 // 获取单个日志详情（必须在 /api/logs 之前定义，因为路由按顺序匹配）
 app.get('/api/logs/:id', auth, async (req, res) => {
   try {
@@ -1108,6 +1933,27 @@ app.get('/api/logs/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/logs/{id}:
+ *   delete:
+ *     summary: 删除日志
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 日志ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       404:
+ *         description: 日志不存在
+ */
 // 删除日志
 app.delete('/api/logs/:id', auth, async (req, res) => {
   try {
@@ -1129,6 +1975,29 @@ app.delete('/api/logs/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/logs:
+ *   get:
+ *     summary: 获取日志列表（最多100条）
+ *     tags: [日志管理]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Log'
+ */
 // 获取日志列表（必须在 /api/logs/:id 之后定义）
 app.get('/api/logs', auth, async (req, res) => {
   try {
@@ -1173,6 +2042,29 @@ app.get('/api/logs', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks:
+ *   get:
+ *     summary: 获取任务列表（最多100条）
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 tasks:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Task'
+ */
 // 获取任务列表
 app.get('/api/tasks', auth, async (req, res) => {
   try {
@@ -1218,6 +2110,42 @@ app.get('/api/tasks', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/top-items:
+ *   get:
+ *     summary: 获取公司十大事项列表
+ *     tags: [TopItems]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 items:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       title:
+ *                         type: string
+ *                       content:
+ *                         type: string
+ *                       orderIndex:
+ *                         type: integer
+ *                       status:
+ *                         type: integer
+ *                       creator:
+ *                         type: object
+ */
 // 公司十大事项管理
 app.get('/api/top-items', auth, async (req, res) => {
   let connection;
@@ -1255,6 +2183,45 @@ app.get('/api/top-items', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/top-items:
+ *   post:
+ *     summary: 创建公司十大事项
+ *     tags: [TopItems]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *               - orderIndex
+ *               - status
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 description: 事项标题
+ *               content:
+ *                 type: string
+ *                 description: 事项内容（可选）
+ *               orderIndex:
+ *                 type: integer
+ *                 minimum: 0
+ *                 description: 排序序号
+ *               status:
+ *                 type: integer
+ *                 enum: [0, 1]
+ *                 description: 状态（0=禁用，1=启用）
+ *     responses:
+ *       201:
+ *         description: 创建成功
+ *       400:
+ *         description: 参数错误
+ */
 app.post('/api/top-items', auth, async (req, res) => {
   let connection;
   try {
@@ -1321,6 +2288,45 @@ app.post('/api/top-items', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/top-items/{id}:
+ *   put:
+ *     summary: 更新公司十大事项
+ *     tags: [TopItems]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 事项ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               content:
+ *                 type: string
+ *               orderIndex:
+ *                 type: integer
+ *                 minimum: 0
+ *               status:
+ *                 type: integer
+ *                 enum: [0, 1]
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       400:
+ *         description: 参数错误
+ *       404:
+ *         description: 事项不存在
+ */
 app.put('/api/top-items/:id', auth, async (req, res) => {
   let connection;
   try {
@@ -1384,6 +2390,29 @@ app.put('/api/top-items/:id', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/top-items/{id}:
+ *   delete:
+ *     summary: 删除公司十大事项
+ *     tags: [TopItems]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 事项ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       400:
+ *         description: ID参数错误
+ *       404:
+ *         description: 事项不存在
+ */
 app.delete('/api/top-items/:id', auth, async (req, res) => {
   let connection;
   try {
@@ -1427,6 +2456,51 @@ function formatDateTimeForMySQL(isoString) {
   }
 }
 
+/**
+ * @swagger
+ * /api/tasks:
+ *   post:
+ *     summary: 创建任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 description: 任务名称
+ *               description:
+ *                 type: string
+ *                 description: 任务描述（可选）
+ *               priority:
+ *                 type: string
+ *                 enum: [low, medium, high]
+ *                 default: low
+ *               assigneeId:
+ *                 type: integer
+ *                 description: 负责人ID（可选）
+ *               dueTime:
+ *                 type: string
+ *                 format: date-time
+ *                 description: 截止时间（可选）
+ *               status:
+ *                 type: string
+ *                 default: not_started
+ *     responses:
+ *       201:
+ *         description: 创建成功
+ *       400:
+ *         description: 任务名称不能为空
+ *       403:
+ *         description: 权限不足（需要 task:create 权限）
+ */
 // 创建任务
 app.post('/api/tasks', auth, checkPermission('task:create'), async (req, res) => {
   try {
@@ -1477,6 +2551,62 @@ app.post('/api/tasks', auth, checkPermission('task:create'), async (req, res) =>
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}:
+ *   put:
+ *     summary: 更新任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 description: 任务名称
+ *               description:
+ *                 type: string
+ *                 description: 任务描述
+ *               priority:
+ *                 type: string
+ *                 enum: [low, medium, high]
+ *               assigneeId:
+ *                 type: integer
+ *                 description: 负责人ID（可选，传 null 表示清空）
+ *               dueTime:
+ *                 type: string
+ *                 format: date-time
+ *                 description: 截止时间
+ *               status:
+ *                 type: string
+ *                 enum: [pending_assignment, not_started, in_progress, paused, completed, closed, cancelled]
+ *                 description: 任务状态
+ *               progress:
+ *                 type: integer
+ *                 minimum: 0
+ *                 maximum: 100
+ *                 description: 进度（0-100），如果为100会自动设置状态为completed
+ *     responses:
+ *       200:
+ *         description: 更新成功
+ *       400:
+ *         description: 没有要更新的字段
+ *       403:
+ *         description: 权限不足（需要 task:edit 权限）
+ *       404:
+ *         description: 任务不存在
+ */
 // 更新任务
 app.put('/api/tasks/:id', auth, checkPermission('task:edit'), async (req, res) => {
   try {
@@ -1579,6 +2709,29 @@ app.put('/api/tasks/:id', auth, checkPermission('task:edit'), async (req, res) =
   }
 });
 
+/**
+ * @swagger
+ * /api/tasks/{id}:
+ *   delete:
+ *     summary: 删除任务
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: 任务ID
+ *     responses:
+ *       200:
+ *         description: 删除成功
+ *       404:
+ *         description: 任务不存在
+ *       403:
+ *         description: 权限不足（需要 task:delete 权限）
+ */
 // 删除任务
 app.delete('/api/tasks/:id', auth, checkPermission('task:delete'), async (req, res) => {
   try {
