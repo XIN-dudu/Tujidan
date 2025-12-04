@@ -32,6 +32,18 @@ class DashboardService {
     return await ApiClient.delete<void>('/dashboard/logs/$logId');
   }
 
+  /// 按部门统计被分配任务数量
+  /// 返回结构: [{"departmentId": 1, "taskCount": 10}, ...]
+  static Future<ApiResponse<List<Map<String, dynamic>>>> getTasksByDepartment({int limit = 50}) async {
+    final query = limit > 0 ? '?limit=$limit' : '';
+    return await ApiClient.get<List<Map<String, dynamic>>>(
+      '/stats/tasks-by-department$query',
+      fromJson: (data) => (data as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList(),
+    );
+  }
+
   /// 获取仪表盘任务
   static Future<ApiResponse<List<DashboardTaskItem>>> getDashboardTasks({
     int limit = defaultLimit,

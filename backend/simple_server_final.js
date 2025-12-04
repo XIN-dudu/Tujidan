@@ -345,6 +345,88 @@ const DASHBOARD_TASK_LIMIT = 10;
 const TOP_ITEMS_LIMIT = 10;
 const PERSONAL_TOP_ITEMS_LIMIT = 10;
 
+const DASHBOARD_DEPT_TASK_LIMIT = 50;
+
+/**
+ * @swagger
+ * /api/stats/tasks-by-department:
+ *   get:
+ *     summary: 按部门统计被分配任务数量
+ *     tags: [任务管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *           maximum: 200
+ *         description: 返回的最大部门数量，按任务量倒序
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       departmentId:
+ *                         type: integer
+ *                       taskCount:
+ *                         type: integer
+ */
+app.get('/api/stats/tasks-by-department', auth, async (req, res) => {
+  const rawLimit = parseInt(req.query.limit, 10);
+  let limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : DASHBOARD_DEPT_TASK_LIMIT;
+  if (limit > 200) limit = 200;
+
+  let connection;
+  try {
+    connection = await getConn();
+
+    // MySQL 在某些版本/驱动组合下不允许 LIMIT 使用占位参数，这里直接插入安全的整数值
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DASHBOARD_DEPT_TASK_LIMIT;
+
+    const [rows] = await connection.execute(
+      `SELECT u.department_id AS departmentId, COUNT(t.id) AS taskCount
+       FROM tasks t
+       JOIN users u ON t.assignee_id = u.id
+       WHERE t.assignee_id IS NOT NULL AND u.department_id IS NOT NULL
+       GROUP BY u.department_id
+       ORDER BY taskCount DESC
+       LIMIT ${safeLimit}`
+    );
+
+    res.json({
+      success: true,
+      data: rows,
+    });
+  } catch (e) {
+    console.error('按部门统计任务失败:', e);
+    res.status(500).json({
+      success: false,
+      message: '获取部门任务统计失败',
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.end();
+      } catch (e) {
+        console.error('关闭连接失败:', e);
+      }
+    }
+  }
+});
+
 // 工具: 规范化前端传来的时间为 MySQL DATETIME 格式
 function toMySQLDateTime(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -1324,6 +1406,7 @@ app.get('/api/health', (req, res) => {
  *         description: 地理编码服务失败
  */
 // 地理位置逆编码接口（无需认证，供客户端调用）
+// 使用高德地图 API 进行逆地理编码
 app.get('/api/geocode', async (req, res) => {
   try {
     const { lat, lon } = req.query;
@@ -1353,12 +1436,16 @@ app.get('/api/geocode', async (req, res) => {
       });
     }
     
-    // 调用 Nominatim 逆地理编码服务
-    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=zh-CN`;
+    // 高德地图 Web 服务 API Key（请替换为你的 Key）
+    const AMAP_API_KEY = 'b2804e7e6fba3f1db20b61fbe58679c0';
+    
+    // 调用高德地图逆地理编码 API
+    // 注意：高德使用的是 "经度,纬度" 的顺序（lon,lat）
+    const amapUrl = `https://restapi.amap.com/v3/geocode/regeo?key=${AMAP_API_KEY}&location=${longitude},${latitude}&output=json&extensions=base`;
     
     const https = require('https');
     const response = await new Promise((resolve, reject) => {
-      https.get(nominatimUrl, {
+      https.get(amapUrl, {
         headers: {
           'User-Agent': 'Tujidan/1.0 (Log Management App)'
         }
@@ -1369,41 +1456,49 @@ app.get('/api/geocode', async (req, res) => {
           try {
             resolve(JSON.parse(data));
           } catch (e) {
-            reject(new Error('解析 Nominatim 响应失败'));
+            reject(new Error('解析高德地图响应失败'));
           }
         });
       }).on('error', reject);
     });
     
-    // 解析地址
-    if (response && response.display_name) {
-      return res.json({
-        success: true,
-        address: response.display_name
-      });
-    } else if (response && response.address) {
-      // 尝试从 address 字段构建更友好的地址
-      const addr = response.address;
-      const parts = [
-        addr.country,
-        addr.state || addr.province,
-        addr.city || addr.county,
-        addr.suburb || addr.town || addr.village,
-        addr.road,
-        addr.house_number
-      ].filter(Boolean);
+    // 解析高德地图响应
+    if (response && response.status === '1' && response.regeocode) {
+      const regeocode = response.regeocode;
+      let address = '';
       
-      return res.json({
-        success: true,
-        address: parts.join('')
-      });
-    } else {
-      // 如果没有获取到地址信息，返回失败
-      return res.status(500).json({
-        success: false,
-        error: '无法获取地址信息'
-      });
+      // 优先使用 formatted_address（格式化地址）
+      if (regeocode.formatted_address) {
+        address = regeocode.formatted_address;
+      } else if (regeocode.addressComponent) {
+        // 或者从地址组件拼接
+        const comp = regeocode.addressComponent;
+        const parts = [
+          comp.province,
+          comp.city,
+          comp.district,
+          comp.township,
+          comp.streetNumber?.street,
+          comp.streetNumber?.number
+        ].filter(v => v && v.trim() && v !== '[]');
+        address = parts.join('');
+      }
+      
+      if (address && address.trim()) {
+        return res.json({
+          success: true,
+          address: address.trim()
+        });
+      }
     }
+    
+    // 如果高德API失败，返回错误
+    const errorMsg = response?.info || '无法获取地址信息';
+    console.error('高德地图逆地理编码失败:', response);
+    return res.status(500).json({
+      success: false,
+      error: errorMsg
+    });
     
   } catch (error) {
     console.error('地理编码失败:', error);

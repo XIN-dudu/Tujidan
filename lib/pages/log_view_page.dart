@@ -5,6 +5,7 @@ import '../models/task.dart';
 import '../services/log_service.dart';
 import '../services/task_service.dart';
 import '../services/log_keyword_service.dart';
+import '../services/dashboard_service.dart';
 import '../widgets/log_activity_chart.dart';
 import '../widgets/log_type_pie_chart.dart'; // 导入饼图组件
 
@@ -27,6 +28,7 @@ class _LogViewPageState extends State<LogViewPage> {
   List<Task> _tasks = [];
   Map<String, List<String>> _logKeywords = {}; // 日志ID -> 关键词列表
   bool _isLoading = false;
+  List<Map<String, dynamic>> _deptTaskStats = [];
 
   @override
   void initState() {
@@ -100,6 +102,7 @@ class _LogViewPageState extends State<LogViewPage> {
         endTime: endDate,
       );
       final taskResp = await TaskService.getTasks();
+      final deptResp = await DashboardService.getTasksByDepartment();
 
       // 加载关键词（仅当有日志时）
       Map<String, List<String>> keywordMap = {};
@@ -115,6 +118,7 @@ class _LogViewPageState extends State<LogViewPage> {
           _logs = logResp.success && logResp.data != null ? logResp.data! : [];
           _tasks = taskResp.success && taskResp.data != null ? taskResp.data! : [];
           _logKeywords = keywordMap;
+          _deptTaskStats = deptResp.success && deptResp.data != null ? deptResp.data! : [];
           _isLoading = false;
         });
       }
@@ -126,6 +130,11 @@ class _LogViewPageState extends State<LogViewPage> {
       if (!taskResp.success && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('加载任务失败: ${taskResp.message}')),
+        );
+      }
+      if (!deptResp.success && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载部门任务统计失败: ${deptResp.message}')),
         );
       }
     } catch (e) {
@@ -459,6 +468,171 @@ class _LogViewPageState extends State<LogViewPage> {
           ),
           const SizedBox(height: 16),
           _buildMonthlyActivityChart(),
+          const SizedBox(height: 32),
+
+          // --- 部门任务统计 ---
+          const Text(
+            '部门任务统计（按被分配任务数）',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          _buildDeptTaskStatsSection(),
+        ],
+      ),
+    );
+  }
+
+  /// 部门任务统计视图
+  /// 统计依据：后端 /api/stats/tasks-by-department，按 tasks.assignee_id 对应用户的 department_id 聚合
+  Widget _buildDeptTaskStatsSection() {
+    if (_deptTaskStats.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.apartment_rounded, size: 36, color: Colors.grey[400]),
+            const SizedBox(height: 8),
+            Text(
+              '暂无部门任务统计数据',
+              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '请先为用户设置部门并分配任务',
+              style: TextStyle(color: Colors.grey[400], fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final departments = _deptTaskStats
+        .map((e) => (e['departmentId'] ?? '').toString())
+        .toList();
+    final counts = _deptTaskStats
+        .map((e) => (e['taskCount'] ?? 0) as num)
+        .toList();
+
+    final maxCount = counts.isEmpty ? 0 : counts.reduce((a, b) => a > b ? a : b);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.apartment_rounded, size: 18, color: Colors.blue[700]),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '部门任务数量（部门ID）',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[800],
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '共 ${_deptTaskStats.length} 个部门',
+                  style: TextStyle(fontSize: 11, color: Colors.blue[700]),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 220,
+            child: ListView.separated(
+              itemCount: departments.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final dept = departments[index];
+                final value = counts[index].toDouble();
+                final ratio = maxCount > 0 ? (value / maxCount) : 0.0;
+                return Row(
+                  children: [
+                    SizedBox(
+                      width: 52,
+                      child: Text(
+                        dept,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          Container(
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[100],
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                          FractionallySizedBox(
+                            widthFactor: ratio.clamp(0.0, 1.0),
+                            child: Container(
+                              height: 18,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Colors.blue[400]!,
+                                    Colors.blue[700]!,
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 40,
+                      child: Text(
+                        value.toInt().toString(),
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
         ],
       ),
     );

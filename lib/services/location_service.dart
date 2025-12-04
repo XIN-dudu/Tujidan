@@ -80,62 +80,22 @@ class LocationService {
         }
       }
 
-      // 若本地失败或跳过，使用网络备用 Nominatim（开源，国内可能较慢）
+      // 若本地失败或跳过，调用后端高德地图接口
       if (address == null) {
         try {
           final url = Uri.parse(
-              'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${position.latitude}&lon=${position.longitude}&zoom=18&addressdetails=1');
-          final resp = await http.get(url, headers: {
-            'User-Agent': 'TujidanApp/1.0 (reverse-geocode)',
-            'Accept-Language': 'zh-CN'
-          }).timeout(const Duration(seconds: 10));
+              'http://localhost:3001/api/geocode?lat=${position.latitude}&lon=${position.longitude}');
+          final resp = await http.get(url).timeout(const Duration(seconds: 10));
           if (resp.statusCode == 200) {
             final data = jsonDecode(resp.body);
-            final display = data['display_name'];
-            if (display is String && display.trim().isNotEmpty) {
-              // OSM display_name 逗号分隔，取前若干段组合
-              final segments = display.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-              // 过滤国家名与重复项
-              final filtered = <String>[];
-              for (final s in segments) {
-                if (s == '中国' || filtered.contains(s)) continue;
-                filtered.add(s);
-              }
-              // 只取前 6 段避免过长
-              address = filtered.take(6).join('');
-            }
-            // 若有分解 address 结构，可进一步优化
-            final addrObj = data['address'];
-            if (address == null && addrObj is Map) {
-              final parts = <String>[];
-              void addKey(String k) {
-                final v = addrObj[k];
-                if (v is String && v.trim().isNotEmpty && !parts.contains(v)) parts.add(v.trim());
-              }
-              // 常见字段顺序
-              for (final k in [
-                'state',
-                'province',
-                'city',
-                'county',
-                'district',
-                'town',
-                'suburb',
-                'road',
-                'residential',
-                'hamlet',
-                'neighbourhood',
-                'house_number'
-              ]) {
-                addKey(k);
-              }
-              if (parts.isNotEmpty) address = parts.join('');
+            if (data['success'] == true && data['address'] != null) {
+              address = data['address'];
             }
           } else {
-            print('Nominatim 响应非200: ${resp.statusCode}');
+            print('后端逆地理编码响应非200: ${resp.statusCode}');
           }
         } catch (e) {
-          print('网络备用逆地理失败: $e');
+          print('后端逆地理编码失败: $e');
         }
       }
 
