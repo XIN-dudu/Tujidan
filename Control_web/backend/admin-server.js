@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
@@ -113,7 +114,7 @@ const swaggerOptions = {
       { name: 'TopItems', description: '公司十大事项管理' },
     ],
   },
-  apis: ['./backend/admin-server.js'],
+  apis: [path.join(__dirname, 'admin-server.js')],
 };
 
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
@@ -345,19 +346,19 @@ app.get('/api/health', (req, res) => {
  *               username:
  *                 type: string
  *                 description: 用户名
- *                 example: testuser
+ *                 example: newuser1
  *               password:
  *                 type: string
  *                 description: 密码
- *                 example: password123
+ *                 example: 123456
  *               email:
  *                 type: string
  *                 description: 邮箱（可选）
- *                 example: test@example.com
+ *                 example: newuser1@tujidan.com
  *               realName:
  *                 type: string
  *                 description: 真实姓名
- *                 example: 张三
+ *                 example: 测试用户1
  *               phone:
  *                 type: string
  *                 description: 手机号（可选）
@@ -478,7 +479,7 @@ app.post('/api/register', auth, async (req, res) => {
  *               password:
  *                 type: string
  *                 description: 密码
- *                 example: password123
+  *                 example: 123456
  *     responses:
  *       200:
  *         description: 登录成功
