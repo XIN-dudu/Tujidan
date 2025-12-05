@@ -8,6 +8,8 @@ import '../services/log_keyword_service.dart';
 import '../services/dashboard_service.dart';
 import '../widgets/log_activity_chart.dart';
 import '../widgets/log_type_pie_chart.dart'; // 导入饼图组件
+import 'log_edit_page.dart';
+import 'task_view_page.dart';
 
 enum ViewType { month, week, day, stats } // 添加 stats 视图类型
 
@@ -1235,92 +1237,103 @@ class _LogViewPageState extends State<LogViewPage> {
         break;
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border(
-          left: BorderSide(
-            width: 4,
-            color: _getPriorityColor(task.priority),
-          ),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.task_alt_rounded, size: 12, color: Colors.blue[700]),
-                      const SizedBox(width: 4),
-                      Text(
-                        '任务',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.blue[700],
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    task.name.isNotEmpty ? task.name : task.description,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.2,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () async {
+        final changed = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(builder: (_) => TaskViewPage(task: task)),
+        );
+        if (changed == true) {
+          _loadLogs();
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border(
+            left: BorderSide(
+              width: 4,
+              color: _getPriorityColor(task.priority),
             ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 12,
-              runSpacing: 6,
-              children: [
-                _buildInfoChip(
-                  icon: statusIcon,
-                  label: task.status.displayName,
-                  color: statusColor,
-                ),
-                _buildInfoChip(
-                  icon: Icons.schedule_rounded,
-                  label: '${task.deadline.hour.toString().padLeft(2, '0')}:${task.deadline.minute.toString().padLeft(2, '0')}',
-                  color: Colors.grey[600]!,
-                ),
-                _buildInfoChip(
-                  icon: Icons.flag_rounded,
-                  label: task.priority.displayName,
-                  color: _getPriorityColor(task.priority),
-                ),
-              ],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.task_alt_rounded, size: 12, color: Colors.blue[700]),
+                        const SizedBox(width: 4),
+                        Text(
+                          '任务',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.blue[700],
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      task.name.isNotEmpty ? task.name : task.description,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: [
+                  _buildInfoChip(
+                    icon: statusIcon,
+                    label: task.status.displayName,
+                    color: statusColor,
+                  ),
+                  _buildInfoChip(
+                    icon: Icons.schedule_rounded,
+                    label: '${task.deadline.hour.toString().padLeft(2, '0')}:${task.deadline.minute.toString().padLeft(2, '0')}',
+                    color: Colors.grey[600]!,
+                  ),
+                  _buildInfoChip(
+                    icon: Icons.flag_rounded,
+                    label: task.priority.displayName,
+                    color: _getPriorityColor(task.priority),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1363,30 +1376,44 @@ class _LogViewPageState extends State<LogViewPage> {
       statusIcon = Icons.radio_button_unchecked_rounded;
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border(
-          left: BorderSide(
-            width: 4,
-            color: _getPriorityColor(log.priority),
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () async {
+        final changed = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => LogEditPage(
+              logEntry: log,
+            ),
           ),
+        );
+        if (changed == true) {
+          _loadLogs();
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border(
+            left: BorderSide(
+              width: 4,
+              color: _getPriorityColor(log.priority),
+            ),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Row(
               children: [
                 Container(
@@ -1497,6 +1524,7 @@ class _LogViewPageState extends State<LogViewPage> {
           ],
         ),
       ),
+    )
     );
   }
 
@@ -1708,11 +1736,25 @@ class _LogViewPageState extends State<LogViewPage> {
                           statusIcon = Icons.radio_button_unchecked_rounded;
                         }
 
-                        return Container(
-                          width: double.infinity,
-                          margin: const EdgeInsets.only(bottom: 10),
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () async {
+                            final changed = await Navigator.of(context).push<bool>(
+                              MaterialPageRoute(
+                                builder: (_) => LogEditPage(
+                                  logEntry: log,
+                                ),
+                              ),
+                            );
+                            if (changed == true) {
+                              _loadLogs();
+                            }
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
                                 _getPriorityColor(log.priority).withOpacity(0.05),
@@ -1776,7 +1818,8 @@ class _LogViewPageState extends State<LogViewPage> {
                               ),
                             ],
                           ),
-                        );
+                        ),
+                      );
                       }).toList(),
                     ],
                     // 任务部分
@@ -1863,30 +1906,40 @@ class _LogViewPageState extends State<LogViewPage> {
         break;
     }
 
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            _getPriorityColor(task.priority).withOpacity(0.05),
-            Colors.white,
-          ],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border(
-          left: BorderSide(
-            color: _getPriorityColor(task.priority),
-            width: 4,
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () async {
+        final changed = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(builder: (_) => TaskViewPage(task: task)),
+        );
+        if (changed == true) {
+          _loadLogs();
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              _getPriorityColor(task.priority).withOpacity(0.05),
+              Colors.white,
+            ],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border(
+            left: BorderSide(
+              color: _getPriorityColor(task.priority),
+              width: 4,
+            ),
           ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           Text(
             task.name.isNotEmpty ? task.name : task.description,
             style: const TextStyle(
@@ -1921,6 +1974,6 @@ class _LogViewPageState extends State<LogViewPage> {
           ),
         ],
       ),
-    );
+    ));
   }
 }
