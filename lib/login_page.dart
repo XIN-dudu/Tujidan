@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:test_flutter/auth_service.dart';
 import 'package:test_flutter/config/server_config.dart';
 import 'package:test_flutter/main.dart';
-import 'package:test_flutter/register_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -173,15 +172,6 @@ class _LoginPageState extends State<LoginPage> {
                               )
                             : const Text('登录'),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextButton(
-                      onPressed: _isLoading ? null : () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const RegisterPage()),
-                        );
-                      },
-                      child: const Text('还没有账号？去注册'),
                     ),
                   ],
                 ),

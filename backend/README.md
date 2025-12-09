@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- ✅ 用户注册和登录
+- ✅ 用户登录
 - ✅ JWT token认证
 - ✅ 密码加密存储
 - ✅ MySQL数据库连接
@@ -39,17 +39,6 @@ npm start
 服务器将在 `http://localhost:3000` 启动
 
 ## API接口
-
-### 注册用户
-```
-POST /api/register
-Content-Type: application/json
-
-{
-  "email": "user@example.com",
-  "password": "password123"
-}
-```
 
 ### 用户登录
 ```

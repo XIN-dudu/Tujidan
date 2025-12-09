@@ -48,50 +48,6 @@ class AuthService {
     return false;
   }
 
-  // 用户注册
-  Future<String?> register({
-    required String username,
-    required String password,
-    String? email,
-    required String realName,
-    String? phone,
-    String? position,
-  }) async {
-    try {
-      final baseUrl = await ServerConfig.getBaseUrl();
-      // 发送注册请求到后端，设置超时
-      final response = await http.post(
-        Uri.parse('$baseUrl/register'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'username': username,
-          'password': password,
-          'email': email,
-          'realName': realName,
-          'phone': phone,
-          'position': position,
-        }),
-      ).timeout(const Duration(seconds: 30));
-
-      final data = json.decode(response.body);
-
-      if (response.statusCode == 201 && data['success'] == true) {
-        // 注册成功，保存token
-        await _saveToken(data['token']);
-        return null; // 返回null表示成功
-      } else {
-        // 注册失败，返回错误信息
-        return data['message'] ?? '注册失败';
-      }
-    } catch (e) {
-      print('注册请求失败: $e');
-      if (e.toString().contains('TimeoutException')) {
-        return '请求超时，请检查网络连接';
-      }
-      return '网络连接失败，请检查网络设置';
-    }
-  }
-
   // 用户登录
   Future<String?> login({required String username, required String password}) async {
     try {
