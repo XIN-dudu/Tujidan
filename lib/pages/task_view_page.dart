@@ -14,6 +14,7 @@ import '../models/task.dart';
 import '../models/api_response.dart';
 import '../services/task_service.dart';
 import '../services/user_service.dart';
+import '../widgets/user_picker_dialog.dart';
 import 'task_edit_page.dart';
 
 class TaskViewPage extends StatefulWidget {
@@ -106,14 +107,29 @@ class _TaskViewPageState extends State<TaskViewPage> {
   }
 
   Future<void> _publish() async {
+    final isAssigned = _task.status != TaskStatus.pending_assignment;
+    String? targetUserId = _task.assigneeId;
+
+    // 如果是分配任务（非撤回），则弹出选择负责人对话框
+    if (!isAssigned) {
+      final Map<String, String>? picked = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (context) => const UserPickerDialog(),
+      );
+      if (picked == null) return; // 用户取消选择
+      targetUserId = picked['id'];
+    }
+
     setState(() => _working = true);
-    final ApiResponse<Task> res = await TaskService.publishTask(_task.id, ownerUserId: _task.assigneeId);
+    final ApiResponse<Task> res = await TaskService.publishTask(_task.id, ownerUserId: targetUserId);
     if (!mounted) return;
     setState(() => _working = false);
     if (res.success && res.data != null) {
       setState(() => _task = res.data!);
       await _checkPermissions(); // 重新检查权限
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('分配成功')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(isAssigned ? '撤回成功' : '分配成功')),
+      );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
     }

@@ -20,7 +20,6 @@ async function checkDeadlinesAndCreateNotifications() {
   try {
     // 1. 连接数据库
     connection = await mysql.createConnection(dbConfig);
-    console.log('Scheduler connected to the database.');
 
     const now = new Date();
     const tomorrow = new Date(now);
@@ -103,14 +102,12 @@ async function checkDeadlinesAndCreateNotifications() {
             );
         }
     }
-    console.log('Deadline check completed.');
 
   } catch (error) {
     console.error('Error in scheduler:', error);
   } finally {
     if (connection) {
       await connection.end();
-      console.log('Scheduler database connection closed.');
     }
   }
 }

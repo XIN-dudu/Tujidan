@@ -1354,6 +1354,22 @@ class _QuadrantPageState extends State<QuadrantPage> {
     );
   }
 
+  void _showLimitDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('提示'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPersonalTopItemsTile() {
     return Ink(
       decoration: BoxDecoration(
@@ -1381,7 +1397,13 @@ class _QuadrantPageState extends State<QuadrantPage> {
                   ),
                 ),
                 IconButton(
-                  onPressed: _personalTopItems.length >= 10 ? null : () => _openPersonalTopItemEditor(),
+                  onPressed: () {
+                    if (_personalTopItems.length >= 10) {
+                      _showLimitDialog('个人十大展示项已满（最多10条）');
+                    } else {
+                      _openPersonalTopItemEditor();
+                    }
+                  },
                   icon: const Icon(Icons.add_circle_outline, color: Colors.white),
                   tooltip: '添加展示项',
                 ),
@@ -1518,7 +1540,13 @@ class _QuadrantPageState extends State<QuadrantPage> {
                     ),
                   ),
                   IconButton(
-                    onPressed: _dashboardLogs.length >= DashboardService.defaultLimit ? null : _openAddLogSheet,
+                    onPressed: () {
+                      if (_dashboardLogs.length >= DashboardService.defaultLimit) {
+                        _showLimitDialog('个人日志已满（最多${DashboardService.defaultLimit}条）');
+                      } else {
+                        _openAddLogSheet();
+                      }
+                    },
                     icon: const Icon(Icons.add_circle_outline, color: Colors.white),
                     tooltip: '添加日志',
                   ),

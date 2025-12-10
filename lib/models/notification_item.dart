@@ -9,6 +9,8 @@ enum NotificationType {
   deadlinePassed,
   logDeadlineSoon,
   logDeadlinePassed,
+  taskUpdate,
+  logUpdate,
   unknown,
 }
 
@@ -30,6 +32,10 @@ NotificationType _notificationTypeFromString(String? type) {
       return NotificationType.logDeadlineSoon;
     case 'log_deadline_passed':
       return NotificationType.logDeadlinePassed;
+    case 'task_update':
+      return NotificationType.taskUpdate;
+    case 'log_update':
+      return NotificationType.logUpdate;
     default:
       log('Unknown notification type: $type');
       return NotificationType.unknown;

@@ -332,7 +332,6 @@ const dbConfig = {
   password: '123456',
   database: 'tujidan',
   port: 3306,
-  authPlugin: 'caching_sha2_password', // 强制使用新版验证插件
   charset: 'utf8mb4',
   connectTimeout: 60000,    // 增加到60秒
   keepAliveInitialDelay: 0,
@@ -470,6 +469,13 @@ function normalizeTaskStatus(input) {
     default:
       return 'not_started';
   }
+}
+
+// 工具: 根据进度推断任务状态
+function getTaskStatusFromProgress(progress) {
+  if (progress === 100) return 'completed';
+  if (progress > 0) return 'in_progress';
+  return 'not_started';
 }
 
 // 鉴权中间件
@@ -1137,7 +1143,7 @@ app.get('/api/verify', async (req, res) => {
     const connection = await mysql.createConnection(dbConfig);
 
     const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at, department_id, mbit FROM users WHERE id = ? AND status = 1',
+      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at, department_id, mbti FROM users WHERE id = ? AND status = 1',
       [decoded.userId]
     );
 
@@ -3920,7 +3926,7 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
     try {
         // 1. 获取任务更新前的数据，用于后续比较
         const [[taskBeforeUpdate]] = await connection.execute(
-            'SELECT id, task_name, creator_id, assignee_id, status, progress FROM tasks WHERE id = ? FOR UPDATE',
+            'SELECT id, task_name, description, priority, plan_start_time, plan_end_time, creator_id, assignee_id, status, progress FROM tasks WHERE id = ? FOR UPDATE',
             [id]
         );
 
@@ -4002,7 +4008,7 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
         }
 
         // b. 任务状态变更通知 (通知负责人)
-        if (status !== undefined && newStatus !== taskBeforeUpdate.status && newAssigneeId && req.user.id !== newAssigneeId) {
+        if (status !== undefined && newStatus !== taskBeforeUpdate.status && newAssigneeId) {
             const notificationTitle = `任务状态更新: ${updatedTaskName}`;
             const notificationContent = `任务 "${updatedTaskName}" 的状态已从 "${taskBeforeUpdate.status}" 更新为 "${newStatus}"`;
             await connection.execute(
@@ -4011,17 +4017,112 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
             );
         }
 
-        // c. 任务进度更新通知 (通知创建者)
-        if (progress !== undefined && progress !== null && progress !== taskBeforeUpdate.progress && taskBeforeUpdate.creator_id && req.user.id !== taskBeforeUpdate.creator_id) {
-            const notificationTitle = `任务进度更新: ${updatedTaskName}`;
-            const notificationContent = `您创建的任务 "${updatedTaskName}" 进度已从 ${taskBeforeUpdate.progress || 0}% 更新为 ${progress}%`;
-            await connection.execute(
-                "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
-                [taskBeforeUpdate.creator_id, 'progress_update', notificationTitle, notificationContent, id]
-            );
+        // c. 任务状态变更通知 (通知创建者)
+        if (status !== undefined && newStatus !== taskBeforeUpdate.status && taskBeforeUpdate.creator_id) {
+            // 如果创建者和负责人是同一个人，避免发两条重复的状态变更通知
+            if (taskBeforeUpdate.creator_id !== newAssigneeId) {
+                const notificationTitle = `任务状态更新: ${updatedTaskName}`;
+                const notificationContent = `您创建的任务 "${updatedTaskName}" 的状态已从 "${taskBeforeUpdate.status}" 更新为 "${newStatus}"`;
+                await connection.execute(
+                    "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
+                    [taskBeforeUpdate.creator_id, 'status_change', notificationTitle, notificationContent, id]
+                );
+            }
         }
 
-        // 5. 更新图片
+        // 3. 属性/进度变更通知 (通知创建者，即使是自己修改也通知)
+        // 合并逻辑：如果有属性变更，将进度变更合并进去；如果只有进度变更，发送单独的进度通知
+        if (taskBeforeUpdate.creator_id) {
+            
+            const changes = [];
+            let progressChanged = false;
+
+            // 检查进度
+            if (progress !== undefined && progress !== null && progress != taskBeforeUpdate.progress) {
+                progressChanged = true;
+            }
+            
+            // 检查任务名
+            if (name !== undefined) {
+                const newName = (name || '').trim();
+                const oldName = (taskBeforeUpdate.task_name || '').trim();
+                if (newName !== oldName) {
+                    changes.push('任务名');
+                }
+            }
+            
+            // 检查优先级 (使用 loose equality 允许 string vs number 比较，且忽略大小写)
+            if (priority !== undefined) {
+                const newPrio = String(priority).toLowerCase();
+                const oldPrio = String(taskBeforeUpdate.priority || '').toLowerCase();
+                if (newPrio !== oldPrio) {
+                    changes.push('优先级');
+                }
+            }
+            
+            // 辅助函数：比较日期 (忽略毫秒差异，解决格式/时区导致的误报)
+            const isDateDifferent = (newStr, oldDate) => {
+                 if (!newStr && !oldDate) return false;
+                 if (!newStr || !oldDate) return true;
+                 
+                 // 尝试将两者转为时间戳比较
+                 const d1 = new Date(newStr).getTime();
+                 const d2 = new Date(oldDate).getTime();
+                 
+                 // 如果无效日期，回退到字符串比较
+                 if (isNaN(d1) || isNaN(d2)) {
+                     const fmtNew = toMySQLDateTime(newStr);
+                     const fmtOld = oldDate ? new Date(oldDate).toISOString().slice(0, 19).replace('T', ' ') : null;
+                     return fmtNew !== fmtOld;
+                 }
+
+                 return Math.abs(d1 - d2) > 2000; // 允许2秒内的误差
+            };
+            
+            // 检查计划开始时间
+            if (planStartTime !== undefined) {
+                 if (isDateDifferent(planStartTime, taskBeforeUpdate.plan_start_time)) {
+                     changes.push('开始时间');
+                 }
+            }
+            
+            // 检查截止时间
+            if (dueTime !== undefined) {
+                 if (isDateDifferent(dueTime, taskBeforeUpdate.plan_end_time)) {
+                     changes.push('截止时间');
+                 }
+            }
+
+            // 检查描述 (归一化 null 和 空字符串)
+            const newDesc = description === undefined ? undefined : (description || '').trim();
+            const oldDesc = (taskBeforeUpdate.description || '').trim();
+            if (newDesc !== undefined && newDesc !== oldDesc) {
+                 changes.push('描述');
+            }
+            
+            if (changes.length > 0) {
+                // 场景A: 有属性变更 -> 合并进度变更，发送 task_update
+                if (progressChanged) {
+                    changes.push('进度');
+                }
+                const notificationTitle = `任务更新: ${updatedTaskName}`;
+                const notificationContent = `变更内容: ${changes.join(', ')}`;
+                await connection.execute(
+                    "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
+                    [taskBeforeUpdate.creator_id, 'task_update', notificationTitle, notificationContent, id]
+                );
+            } else if (progressChanged) {
+                // 场景B: 只有进度变更 -> 发送 progress_update
+                const notificationTitle = `任务进度更新: ${updatedTaskName}`;
+                const notificationContent = `进度已更新为 ${progress}%`;
+                await connection.execute(
+                    "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
+                    [taskBeforeUpdate.creator_id, 'progress_update', notificationTitle, notificationContent, id]
+                );
+            }
+        }
+
+    // 4. 更新图片
         if (Array.isArray(imageDataUris)) {
             await connection.execute('DELETE FROM task_images WHERE task_id = ?', [id]);
             await saveDataUriImages(connection, 'task_images', 'task_id', id, imageDataUris);
@@ -4101,7 +4202,7 @@ app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
     const connection = await getConn();
 
     // 检查任务是否存在以及用户是否有权限更新
-    const [tasks] = await connection.execute('SELECT id, assignee_id, creator_id FROM tasks WHERE id = ?', [id]);
+    const [tasks] = await connection.execute('SELECT id, task_name, assignee_id, creator_id, status, progress FROM tasks WHERE id = ?', [id]);
     if (tasks.length === 0) {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
@@ -4115,11 +4216,34 @@ app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
     }
 
     const newStatus = getTaskStatusFromProgress(progress);
+    const oldStatus = task.status;
+    const oldProgress = task.progress;
 
     await connection.execute(
       'UPDATE tasks SET progress = ?, status = ? WHERE id = ?',
       [progress, newStatus, id]
     );
+
+    // --- 通知逻辑 ---
+    // 1. 进度更新通知 (通知创建者，即使是自己修改也通知，作为记录)
+    if (progress !== oldProgress && task.creator_id) {
+      const notificationTitle = `任务进度更新: ${task.task_name}`;
+      const notificationContent = `您创建的任务 "${task.task_name}" 进度已从 ${oldProgress || 0}% 更新为 ${progress}%`;
+      await connection.execute(
+        "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
+        [task.creator_id, 'progress_update', notificationTitle, notificationContent, id]
+      );
+    }
+
+    // 2. 状态变更通知 (通知创建者，即使是自己修改也通知)
+    if (newStatus !== oldStatus && task.creator_id) {
+      const notificationTitle = `任务状态更新: ${task.task_name}`;
+      const notificationContent = `您创建的任务 "${task.task_name}" 状态已从 "${oldStatus}" 更新为 "${newStatus}"`;
+      await connection.execute(
+        "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'task')",
+        [task.creator_id, 'status_change', notificationTitle, notificationContent, id]
+      );
+    }
 
   const [rows] = await connection.execute('SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id FROM tasks WHERE id = ?', [id]);
   rows[0].images = await getImagesForSingle(connection, 'task_images', 'task_id', id);
@@ -4962,7 +5086,8 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
     const { title, content, type, priority, progress, timeFrom, timeTo, taskId, syncTaskProgress = false, logStatus, images: imageDataUris, location } = req.body;
     
     const connection = await getConn();
-    const [exists] = await connection.execute('SELECT id, task_id FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
+    // 修改查询，获取更新前的所有字段以便比较
+    const [exists] = await connection.execute('SELECT * FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1', [id, req.user.id]);
     if (exists.length === 0) {
       await connection.end();
       return res.status(404).json({ success: false, message: '日志不存在' });
@@ -5050,6 +5175,39 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
         await connection.execute('UPDATE tasks SET progress = COALESCE(?, progress) WHERE id = ?', [progress, targetTaskId]);
       }
     }
+
+    // --- 日志更新通知 ---
+    // 检查是否有重要属性变更 (标题、内容、时间、进度、优先级)
+    const logBeforeUpdate = exists[0];
+    const changes = [];
+
+    if (title !== undefined && title !== logBeforeUpdate.title) changes.push('标题');
+    if (content !== undefined && content !== logBeforeUpdate.content) changes.push('内容');
+    if (priority !== undefined && priority !== logBeforeUpdate.priority) changes.push('优先级');
+    if (progress !== undefined && progress !== logBeforeUpdate.progress) changes.push('进度');
+    
+    if (timeFrom !== undefined) {
+         const fmtNew = toMySQLDateTime(timeFrom);
+         const fmtOld = logBeforeUpdate.time_from ? new Date(logBeforeUpdate.time_from).toISOString().slice(0, 19).replace('T', ' ') : null;
+         if (fmtNew !== fmtOld) changes.push('开始时间');
+    }
+    if (timeTo !== undefined) {
+         const fmtNew = toMySQLDateTime(timeTo);
+         const fmtOld = logBeforeUpdate.time_to ? new Date(logBeforeUpdate.time_to).toISOString().slice(0, 19).replace('T', ' ') : null;
+         if (fmtNew !== fmtOld) changes.push('结束时间');
+    }
+
+    if (changes.length > 0) {
+        const displayTitle = title || logBeforeUpdate.title || '无标题日志';
+        const notificationTitle = `日志已更新: ${displayTitle}`;
+        const notificationContent = `您的日志 "${displayTitle}" 已更新: ${changes.join(', ')} 已变更`;
+        
+        await connection.execute(
+            "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'log')",
+            [req.user.id, 'log_update', notificationTitle, notificationContent, id]
+        );
+    }
+
     const [rows] = await connection.execute('SELECT * FROM logs WHERE id = ?', [id]);
     rows[0].images = await getImagesForSingle(connection, 'log_images', 'log_id', id);
     await connection.end();
