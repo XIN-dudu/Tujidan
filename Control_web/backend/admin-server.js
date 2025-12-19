@@ -4,6 +4,7 @@ const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const compression = require('compression');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 
@@ -11,6 +12,18 @@ const app = express();
 const PORT = process.env.PORT || 3002; // 使用不同端口
 
 // 中间件
+// 启用Gzip压缩（优化HTML、CSS、JS传输）
+app.use(compression({
+  filter: (req, res) => {
+    // 压缩所有文本类型的响应
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+  level: 6 // 压缩级别 0-9，6是平衡性能和压缩率的推荐值
+}));
+
 app.use(cors({
   origin: function (origin, callback) {
     // 允许所有本地请求和file://协议
@@ -25,6 +38,35 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+// 静态文件服务 - 配置缓存策略（解决缓存问题）
+app.use('/assets', express.static(path.join(__dirname, '../assets'), {
+  maxAge: '1y', // 缓存1年
+  etag: true, // 启用ETag
+  lastModified: true, // 启用Last-Modified
+  setHeaders: (res, filePath) => {
+    // 为不同类型的文件设置不同的缓存策略
+    if (filePath.endsWith('.css') || filePath.endsWith('.js')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // 1年，不可变
+    } else if (filePath.endsWith('.woff') || filePath.endsWith('.woff2')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // 字体文件缓存1年
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=86400'); // 其他文件缓存1天
+    }
+  }
+}));
+
+// 静态HTML文件服务（不缓存或短期缓存）
+app.use(express.static(path.join(__dirname, '..'), {
+  maxAge: '0', // HTML不缓存，确保更新及时
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+  }
+}));
 
 // Swagger 配置
 const swaggerOptions = {
@@ -65,7 +107,7 @@ const swaggerOptions = {
             avatar_url: { type: 'string' },
             status: { type: 'integer' },
             department_id: { type: 'integer' },
-            mbit: { type: 'string' },
+            mbti: { type: 'string' },
             created_at: { type: 'string', format: 'date-time' },
           },
         },
@@ -315,6 +357,23 @@ function checkPermission(permission) {
  *                   type: string
  *                   format: date-time
  */
+// 根路径 - 提供 API 信息
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Tujidan 管理后台 API 服务器',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      apiDocs: '/api-docs',
+      apiDocsJson: '/api-docs.json',
+      login: '/api/login',
+      verify: '/api/verify'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 // 健康检查接口
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -896,7 +955,7 @@ async function fetchAllActiveUsers() {
         u.avatar_url,
         u.status,
         u.department_id,
-        u.mbit,
+        u.mbti,
         u.created_at
       FROM users u
       WHERE u.status = 1
@@ -940,7 +999,7 @@ async function fetchAllActiveUsers() {
         status: user.status,
         department_id: user.department_id || null,
         department_name: user.department_id ? `部门${user.department_id}` : null,
-        mbit: user.mbit || null,
+        mbti: user.mbti || null,
         created_at: user.created_at,
         primaryRole: roleInfo.names[0] || null,
         allRoles: roleInfo.names,
@@ -989,7 +1048,7 @@ async function fetchAllActiveUsers() {
  *               departmentId:
  *                 type: integer
  *                 description: 部门ID（可选）
- *               mbit:
+ *               mbti:
  *                 type: string
  *                 description: MBTI类型（可选）
  *     responses:
@@ -1004,9 +1063,9 @@ async function fetchAllActiveUsers() {
 app.put('/api/users/:id', auth, async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
-    const { username, realName, email, phone, position, password, departmentId, mbit } = req.body;
+    const { username, realName, email, phone, position, password, departmentId, mbti } = req.body;
     
-    console.log('更新用户请求:', { userId, departmentId, mbit, body: req.body });
+    console.log('更新用户请求:', { userId, departmentId, mbti, body: req.body });
     
     const connection = await getConn();
     
@@ -1048,11 +1107,11 @@ app.put('/api/users/:id', auth, async (req, res) => {
       updateValues.push(departmentId || null);
       console.log('添加部门更新:', departmentId);
     }
-    if (mbit !== undefined) {
+    if (mbti !== undefined) {
       // 现在字段允许 NULL，所以可以更新 null 值
-      updateFields.push('mbit = ?');
-      updateValues.push(mbit || null);
-      console.log('添加MBTI更新:', mbit);
+      updateFields.push('mbti = ?');
+      updateValues.push(mbti || null);
+      console.log('添加MBTI更新:', mbti);
     }
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);

@@ -4,8 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>土鸡蛋后台管理系统</title>
-    <link href="assets/bootstrap.min.css" rel="stylesheet">
-    <link href="assets/bootstrap-icons.css" rel="stylesheet">
+    <!-- 预加载CSS资源，避免渲染阻塞 -->
+    <link rel="preload" href="assets/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="assets/bootstrap.min.css"></noscript>
+    <link rel="preload" href="assets/bootstrap-icons.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="assets/bootstrap-icons.css"></noscript>
     <style>
         :root {
             --primary-color: #FF6B35;
@@ -691,7 +694,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">MBTI</label>
-                            <select class="form-select" id="mbit">
+                            <select class="form-select" id="mbti">
                                 <option value="">请选择MBTI类型</option>
                                 <option value="INTJ">INTJ - 建筑师</option>
                                 <option value="INTP">INTP - 逻辑学家</option>
@@ -997,7 +1000,8 @@
         </div>
     </div>
 
-    <script src="assets/bootstrap.bundle.min.js"></script>
-    <script src="app.js"></script>
+    <!-- 使用defer延迟加载JavaScript，不阻塞HTML解析 -->
+    <script src="assets/bootstrap.bundle.min.js" defer></script>
+    <script src="app.js" defer></script>
 </body>
 </html>

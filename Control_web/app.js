@@ -505,16 +505,16 @@ function displayUsers(users, pagination) {
         }
         
         // MBTI显示逻辑
-        let mbitDisplay = '';
-        if (user.mbit) {
-            mbitDisplay = `
-                <span class="badge bg-warning text-dark">${user.mbit}</span>
+        let mbtiDisplay = '';
+        if (user.mbti) {
+            mbtiDisplay = `
+                <span class="badge bg-warning text-dark">${user.mbti}</span>
                 <button class="btn btn-sm btn-outline-warning ms-1" onclick="assignMBTI(${user.id})" title="编辑MBTI">
                     <i class="bi bi-gear"></i>
                 </button>
             `;
         } else {
-            mbitDisplay = `
+            mbtiDisplay = `
                 <span class="text-muted">未设置</span>
                 <button class="btn btn-sm btn-warning ms-1" onclick="assignMBTI(${user.id})" title="设置MBTI">
                     <i class="bi bi-plus"></i>
@@ -528,7 +528,7 @@ function displayUsers(users, pagination) {
             <td>${user.email || '-'}</td>
             <td>${roleDisplay}</td>
             <td>${departmentDisplay}</td>
-            <td>${mbitDisplay}</td>
+            <td>${mbtiDisplay}</td>
             <td><span class="badge bg-${user.status === 1 ? 'success' : 'danger'}">${user.status === 1 ? '正常' : '禁用'}</span></td>
             <td>
                 <button class="btn btn-sm btn-outline-primary me-1" onclick="editUser(${user.id})" title="编辑用户">
@@ -837,7 +837,7 @@ async function loadUserData(userId) {
             document.getElementById('email').value = user.email || '';
             document.getElementById('phone').value = user.phone || '';
             document.getElementById('departmentId').value = user.departmentId || '';
-            document.getElementById('mbit').value = user.mbit || '';
+            document.getElementById('mbti').value = user.mbti || '';
             // 密码字段在编辑时留空
             document.getElementById('password').value = '';
             document.getElementById('password').placeholder = '留空表示不修改密码';
@@ -919,7 +919,7 @@ async function saveUser() {
         email: document.getElementById('email').value,
         phone: document.getElementById('phone').value,
         departmentId: document.getElementById('departmentId').value ? parseInt(document.getElementById('departmentId').value) : null,
-        mbit: document.getElementById('mbit').value || null
+        mbti: document.getElementById('mbti').value || null
     };
     
     // 只有在创建用户或修改密码时才包含密码
@@ -1470,7 +1470,7 @@ async function assignMBTI(userId) {
         });
         
         const userData = await userResponse.json();
-        const currentMBTI = userData.success && userData.user ? userData.user.mbit : null;
+        const currentMBTI = userData.success && userData.user ? userData.user.mbti : null;
         
         // 创建MBTI选择下拉框
         const mbtiOptions = `
@@ -1494,7 +1494,7 @@ async function assignMBTI(userId) {
         `;
         
         const modalHtml = `
-            <div class="modal fade" id="mbitAssignModal" tabindex="-1">
+            <div class="modal fade" id="mbtiAssignModal" tabindex="-1">
                 <div class="modal-dialog">
                     <div class="modal-content">
                         <div class="modal-header">
@@ -1504,7 +1504,7 @@ async function assignMBTI(userId) {
                         <div class="modal-body">
                             <div class="mb-3">
                                 <label class="form-label">选择MBTI类型</label>
-                                <select class="form-select" id="mbitSelect">
+                                <select class="form-select" id="mbtiSelect">
                                     ${mbtiOptions}
                                 </select>
                             </div>
@@ -1519,7 +1519,7 @@ async function assignMBTI(userId) {
         `;
         
         // 移除旧的模态框
-        const oldModal = document.getElementById('mbitAssignModal');
+        const oldModal = document.getElementById('mbtiAssignModal');
         if (oldModal) {
             oldModal.remove();
         }
@@ -1528,7 +1528,7 @@ async function assignMBTI(userId) {
         document.body.insertAdjacentHTML('beforeend', modalHtml);
         
         // 显示模态框
-        const modal = new bootstrap.Modal(document.getElementById('mbitAssignModal'));
+        const modal = new bootstrap.Modal(document.getElementById('mbtiAssignModal'));
         modal.show();
         
     } catch (error) {
@@ -1539,10 +1539,10 @@ async function assignMBTI(userId) {
 
 async function saveUserMBTI(userId) {
     try {
-        const mbitSelect = document.getElementById('mbitSelect');
-        const mbitValue = mbitSelect.value;
+        const mbtiSelect = document.getElementById('mbtiSelect');
+        const mbtiValue = mbtiSelect.value;
         // 如果选择的是"未设置"（空字符串），发送 null；否则发送选中的值
-        const mbit = mbitValue === '' ? null : mbitValue;
+        const mbti = mbtiValue === '' ? null : mbtiValue;
         
         // 如果选择的是"未设置"，需要特殊处理（因为字段可能不允许 NULL）
         // 这里先尝试发送 null，如果失败，后端会跳过更新
@@ -1552,7 +1552,7 @@ async function saveUserMBTI(userId) {
                 'Authorization': `Bearer ${authToken}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ mbit: mbit })
+            body: JSON.stringify({ mbti: mbti })
         });
         
         // 检查响应状态
@@ -1566,7 +1566,7 @@ async function saveUserMBTI(userId) {
         
         if (data.success) {
             showSuccess('MBTI设置成功');
-            bootstrap.Modal.getInstance(document.getElementById('mbitAssignModal')).hide();
+            bootstrap.Modal.getInstance(document.getElementById('mbtiAssignModal')).hide();
             clearCache('users'); // 清除缓存，强制刷新
             loadUsers(true); // 重新加载用户列表
         } else {
