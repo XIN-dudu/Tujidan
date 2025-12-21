@@ -47,20 +47,46 @@ class _UserPickerDialogState extends State<UserPickerDialog> {
       final keyword = _q.text.trim();
       final url = keyword.isEmpty
           ? '/users'
-          : '/users?keyword=${Uri.encodeComponent(keyword)}';
+          : '/users/search?keyword=${Uri.encodeComponent(keyword)}';
       final res = await ApiClient.get<Map<String, dynamic>>(
         url,
         fromJson: (data) => data as Map<String, dynamic>,
       );
       if (!mounted) return;
+      
+      List<Map<String, dynamic>> users = [];
+      if (res.success && res.data != null) {
+        // 尝试从 data 中获取 users 字段
+        final usersData = res.data!['users'];
+        if (usersData is List) {
+          users = usersData.map((u) {
+            // 确保 id 是字符串类型，统一数据格式
+            final userMap = Map<String, dynamic>.from(u as Map);
+            if (userMap['id'] != null) {
+              userMap['id'] = userMap['id'].toString();
+            }
+            return userMap;
+          }).toList();
+        }
+      } else {
+        // 如果请求失败，显示错误信息
+        final errorMessage = res.message ?? '获取用户列表失败';
+        debugPrint('获取用户列表失败: $errorMessage');
+        if (mounted && errorMessage.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(errorMessage),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+      
+      if (!mounted) return;
       setState(() {
         _loading = false;
-        if (res.success && res.data != null) {
-          _list =
-              (res.data!['users'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-        } else {
-          _list = [];
-        }
+        _list = users;
       });
     } catch (e) {
       if (!mounted) return;
@@ -68,6 +94,17 @@ class _UserPickerDialogState extends State<UserPickerDialog> {
         _loading = false;
         _list = [];
       });
+      // 打印错误信息以便调试
+      debugPrint('获取用户列表异常: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('获取用户列表失败: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 

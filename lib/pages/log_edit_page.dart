@@ -54,6 +54,7 @@ class _LogEditPageState extends State<LogEditPage> {
   Map<String, dynamic>? _selectedLocation; // 存储选择的地理位置
   final LocationService _locationService = LocationService();
   bool _isLoadingLocation = false;
+  bool _endTimeManuallySet = false; // 标记结束时间是否被手动设置过
 
   @override
   void initState() {
@@ -68,6 +69,11 @@ class _LogEditPageState extends State<LogEditPage> {
       if (widget.initialPriority != null) {
         _selectedPriority = widget.initialPriority!;
       }
+      // 新建日志时，设置默认结束时间为开始时间的后三天
+      if (_startTime != null) {
+        _endTime = _startTime!.add(const Duration(days: 3));
+        _endTimeManuallySet = false; // 新建时默认值，未手动设置
+      }
     }
   }
 
@@ -80,6 +86,8 @@ class _LogEditPageState extends State<LogEditPage> {
     _selectedTime = log.time;
     _startTime = log.startTime ?? log.time;
     _endTime = log.endTime;
+    // 如果编辑已有日志且结束时间存在，标记为手动设置
+    _endTimeManuallySet = log.endTime != null;
     // 兼容旧数据：将 pending 或 cancelled 映射为 in_progress
     _logStatus = (log.logStatus == 'pending' || log.logStatus == 'cancelled') 
         ? 'in_progress' 
@@ -714,16 +722,20 @@ class _LogEditPageState extends State<LogEditPage> {
                             );
                             if (time != null) {
                               setState(() {
-                                _startTime = DateTime(
+                                final newStartTime = DateTime(
                                   date.year,
                                   date.month,
                                   date.day,
                                   time.hour,
                                   time.minute,
                                 );
-                                if (_endTime != null &&
-                                    _endTime!.isBefore(_startTime!)) {
-                                  _endTime = _startTime;
+                                _startTime = newStartTime;
+                                
+                                // 如果结束时间未手动设置，或者结束时间早于新的开始时间，自动更新为开始时间的后三天
+                                if (!_endTimeManuallySet || 
+                                    (_endTime != null && _endTime!.isBefore(newStartTime))) {
+                                  _endTime = newStartTime.add(const Duration(days: 3));
+                                  _endTimeManuallySet = false; // 自动更新的，不算手动设置
                                 }
                               });
                             }
@@ -765,6 +777,7 @@ class _LogEditPageState extends State<LogEditPage> {
                                   time.hour,
                                   time.minute,
                                 );
+                                _endTimeManuallySet = true; // 标记为手动设置
                                 if (_startTime != null &&
                                     _endTime!.isBefore(_startTime!)) {
                                   _startTime = _endTime;

@@ -596,8 +596,9 @@ async function validateDeptHeadAssignment(connection, deptHeadUserId, targetUser
   if (!deptHead) {
     return { ok: false, status: 400, message: '部门负责人不存在' };
   }
+  // 部门负责人必须设置部门才能分配任务
   if (deptHead.department_id === null || deptHead.department_id === undefined) {
-    return { ok: false, status: 400, message: '请先为该负责人设置所属部门' };
+    return { ok: false, status: 400, message: '没有所属部门，请联系管理员' };
   }
   const [[targetUser]] = await connection.execute(
     'SELECT id, department_id FROM users WHERE id = ? LIMIT 1',
@@ -606,9 +607,11 @@ async function validateDeptHeadAssignment(connection, deptHeadUserId, targetUser
   if (!targetUser) {
     return { ok: false, status: 400, message: '指定的负责人不存在' };
   }
+  // 部门负责人只能分配给同部门的成员
   if (targetUser.department_id === null || targetUser.department_id === undefined) {
-    return { ok: false, status: 403, message: '负责人只能分配给已加入部门的成员' };
+    return { ok: false, status: 403, message: '部门负责人只能分配给已加入本部门的成员' };
   }
+  // 检查目标用户是否与部门负责人在同一部门
   if (Number(targetUser.department_id) !== Number(deptHead.department_id)) {
     return { ok: false, status: 403, message: '部门负责人只能给本部门成员分配任务' };
   }
@@ -2072,16 +2075,17 @@ app.get('/api/users', auth, async (req, res) => {
 
     if (isDeptHead && !isGlobalManager) {
       departmentFilter = await getUserDepartmentId(connection, req.user.id);
+      // 部门负责人必须设置部门才能查看用户列表
       if (departmentFilter === null || departmentFilter === undefined) {
         await connection.end();
         return res.status(400).json({
           success: false,
-          message: '请先在个人信息中设置所属部门后再分配任务'
+          message: '没有所属部门，请联系管理员'
         });
       }
     }
 
-    let sql = 'SELECT id, username, avatar_url, department_id, created_at, updated_at FROM users WHERE status = 1';
+    let sql = 'SELECT id, username, real_name, avatar_url, department_id, created_at, updated_at FROM users WHERE status = 1';
     const params = [];
 
     if (departmentFilter !== null) {
@@ -2097,6 +2101,7 @@ app.get('/api/users', auth, async (req, res) => {
     const formattedUsers = rows.map(user => ({
       id: user.id.toString(),
       username: user.username,
+      real_name: user.real_name,
       avatar_url: user.avatar_url,
       department_id: user.department_id != null ? user.department_id.toString() : null,
       created_at: user.created_at,
@@ -2259,11 +2264,12 @@ app.get('/api/users/search', auth, async (req, res) => {
 
     if (isDeptHead && !isGlobalManager) {
       departmentFilter = await getUserDepartmentId(connection, req.user.id);
+      // 部门负责人必须设置部门才能查看用户列表
       if (departmentFilter === null || departmentFilter === undefined) {
         await connection.end();
         return res.status(400).json({
           success: false,
-          message: '请先在个人信息中设置所属部门后再分配任务'
+          message: '没有所属部门，请联系管理员'
         });
       }
     }
@@ -2288,9 +2294,19 @@ app.get('/api/users/search', auth, async (req, res) => {
     sql += ' ORDER BY id DESC ' + (keyword ? 'LIMIT 20' : 'LIMIT 50');
 
     const [userRows] = await connection.execute(sql, params);
+    
+    // 格式化用户数据以匹配前端期望，与 /api/users 接口保持一致
+    const formattedUsers = userRows.map(user => ({
+      id: user.id.toString(),
+      username: user.username,
+      real_name: user.real_name,
+      email: user.email,
+      avatar_url: user.avatar_url,
+      department_id: user.department_id != null ? user.department_id.toString() : null,
+    }));
 
     await connection.end();
-    return res.json({ success: true, users: userRows });
+    return res.json({ success: true, users: formattedUsers });
   } catch (e) {
     if (connection) await connection.end();
     console.error('查询用户失败:', e);
@@ -3963,7 +3979,10 @@ app.patch('/api/tasks/:id', auth, async (req, res) => {
             return res.status(403).json({ success: false, message: '只有任务创建者可以重新分配负责人' });
         }
 
-        if (isDeptHead && !isFounderOrAdmin && hasExplicitOwnerValue && ownerUserIdValue !== req.user.id) {
+        // 只有当负责人真正改变时才进行部门检查（避免编辑任务时不必要的检查）
+        if (isDeptHead && !isFounderOrAdmin && hasExplicitOwnerValue && 
+            ownerUserIdValue !== req.user.id && 
+            ownerUserIdValue !== taskBeforeUpdate.assignee_id) {
             const deptCheck = await validateDeptHeadAssignment(connection, req.user.id, ownerUserIdValue);
             if (!deptCheck.ok) {
                 await connection.rollback();
