@@ -1368,12 +1368,10 @@ class _LogViewPageState extends State<LogViewPage> {
     if (log.logStatus == 'completed') {
       statusColor = Colors.green;
       statusIcon = Icons.check_circle_rounded;
-    } else if (log.logStatus == 'cancelled') {
-      statusColor = Colors.red;
-      statusIcon = Icons.cancel_rounded;
     } else {
-      statusColor = Colors.orange;
-      statusIcon = Icons.radio_button_unchecked_rounded;
+      // in_progress 或 pending（兼容旧数据）
+      statusColor = Colors.blue;
+      statusIcon = Icons.directions_run_rounded;
     }
 
     return InkWell(
@@ -1462,9 +1460,7 @@ class _LogViewPageState extends State<LogViewPage> {
                   icon: statusIcon,
                   label: log.logStatus == 'completed' 
                     ? '已完成' 
-                    : log.logStatus == 'cancelled'
-                      ? '已取消'
-                      : '进行中',
+                    : '进行中',
                   color: statusColor,
                 ),
                 if (log.type != null)
@@ -1728,12 +1724,10 @@ class _LogViewPageState extends State<LogViewPage> {
                         if (log.logStatus == 'completed') {
                           statusColor = Colors.green;
                           statusIcon = Icons.check_circle_rounded;
-                        } else if (log.logStatus == 'cancelled') {
-                          statusColor = Colors.red;
-                          statusIcon = Icons.cancel_rounded;
                         } else {
-                          statusColor = Colors.orange;
-                          statusIcon = Icons.radio_button_unchecked_rounded;
+                          // in_progress 或 pending（兼容旧数据）
+                          statusColor = Colors.blue;
+                          statusIcon = Icons.directions_run_rounded;
                         }
 
                         return InkWell(

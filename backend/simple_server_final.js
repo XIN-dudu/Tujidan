@@ -89,7 +89,7 @@ const swaggerOptions = {
             startTime: { type: 'string', format: 'date-time' },
             endTime: { type: 'string', format: 'date-time' },
             taskId: { type: 'integer' },
-            logStatus: { type: 'string', enum: ['pending', 'completed', 'cancelled'] },
+            logStatus: { type: 'string', enum: ['in_progress', 'completed'] },
           },
         },
       },
@@ -1169,7 +1169,7 @@ app.get('/api/verify', async (req, res) => {
         avatarUrl: user.avatar_url,
         createdAt: user.created_at,
         departmentId: user.department_id,
-        mbti: user.mbit
+        mbti: user.mbti
       }
     });
 
@@ -1615,11 +1615,11 @@ app.put('/api/user/profile', auth, async (req, res) => {
             message: 'MBTI类型无效' 
           });
         }
-        updateFields.push('mbit = ?');
+        updateFields.push('mbti = ?');
         updateValues.push(mbtiUpper);
       } else {
         // 允许设置为null
-        updateFields.push('mbit = ?');
+        updateFields.push('mbti = ?');
         updateValues.push(null);
       }
     }
@@ -1658,7 +1658,7 @@ app.put('/api/user/profile', auth, async (req, res) => {
 
     // 获取更新后的用户信息
     const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url, created_at, department_id, mbit FROM users WHERE id = ?',
+      'SELECT id, username, email, real_name, phone, position, avatar_url, created_at, department_id, mbti FROM users WHERE id = ?',
       [userId]
     );
 
@@ -1685,7 +1685,7 @@ app.put('/api/user/profile', auth, async (req, res) => {
         avatarUrl: user.avatar_url,
         createdAt: user.created_at,
         departmentId: user.department_id,
-        mbti: user.mbit
+        mbti: user.mbti
       }
     });
   } catch (error) {
@@ -2425,10 +2425,10 @@ app.get('/api/user/mbti-analysis', auth, async (req, res) => {
 
     // 获取用户的MBTI，如果没有则返回错误
     const [userRows] = await connection.execute(
-      'SELECT mbit FROM users WHERE id = ?',
+      'SELECT mbti FROM users WHERE id = ?',
       [req.user.id]
     );
-    const userMbti = userRows[0]?.mbit;
+    const userMbti = userRows[0]?.mbti;
     
     if (!userMbti || userMbti.trim() === '') {
       await connection.end();
@@ -3018,7 +3018,7 @@ app.get('/api/dashboard/logs', auth, async (req, res) => {
       id: row.id,
       title: row.title || '',
       content: row.content || '',
-      logStatus: row.log_status || 'pending',
+      logStatus: row.log_status || 'in_progress',
       startTime: row.time_from,
       endTime: row.time_to,
       priority: row.priority,
@@ -4496,8 +4496,8 @@ app.post('/api/tasks/:id/publish', auth, async (req, res) => {
  *                 description: 是否同步任务进度
  *               logStatus:
  *                 type: string
- *                 enum: [pending, completed, cancelled]
- *                 default: pending
+ *                 enum: [in_progress, completed]
+ *                 default: in_progress
  *               location:
  *                 type: object
  *                 description: 地理位置信息（可选）
@@ -4534,7 +4534,7 @@ app.post('/api/logs', auth, async (req, res) => {
       taskId = null,
       createNewTask = null,
       syncTaskProgress = false,
-      logStatus = 'pending',
+      logStatus = 'in_progress',
       images: imageDataUris = [],
       location = null,
     } = req.body;
@@ -4625,7 +4625,7 @@ app.post('/api/logs', auth, async (req, res) => {
 
         const [lRes] = await connection.execute(
             'INSERT INTO logs (author_user_id, title, content, log_type, priority, progress, time_from, time_to, task_id, log_status, latitude, longitude, address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [req.user.id, title, content, logType, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'pending', latitude, longitude, address]
+            [req.user.id, title, content, logType, priority, Math.min(Math.max(progress, 0), 100), startDt, endDt, finalTaskId, logStatus || 'in_progress', latitude, longitude, address]
         );
         const logId = lRes.insertId;
 
@@ -4751,13 +4751,37 @@ app.get('/api/logs', auth, async (req, res) => {
     const connection = await getConn();
     const { type, q, startDate, endDate, startTime, endTime } = req.query;
 
-    // 日志始终只显示当前用户自己的
-    const params = [req.user.id];
-    let sql = 'SELECT * FROM logs WHERE author_user_id = ?';
+    // 检查用户权限：管理员和部门负责人可以看到部门内所有人的日志
+    const roleNames = await getUserRoleNames(connection, req.user.id);
+    const isGlobalManager = roleNames.includes('founder') || roleNames.includes('admin');
+    const isDeptHead = roleNames.includes('dept_head');
+    
+    const params = [];
+    let sql = 'SELECT l.*, u.username AS author_username, u.real_name AS author_real_name FROM logs l LEFT JOIN users u ON l.author_user_id = u.id WHERE';
+    
+    if (isGlobalManager) {
+      // 全局管理员可以看到所有日志
+      sql += ' 1=1';
+    } else if (isDeptHead) {
+      // 部门负责人可以看到本部门所有人的日志
+      const deptId = await getUserDepartmentId(connection, req.user.id);
+      if (deptId) {
+        sql += ' EXISTS (SELECT 1 FROM users u2 WHERE u2.id = l.author_user_id AND u2.department_id = ?)';
+        params.push(deptId);
+      } else {
+        // 如果没有部门，只能看自己的
+        sql += ' l.author_user_id = ?';
+        params.push(req.user.id);
+      }
+    } else {
+      // 普通用户只能看自己的日志
+      sql += ' l.author_user_id = ?';
+      params.push(req.user.id);
+    }
 
     // 类型过滤
     if (type && ['work', 'study', 'life', 'other'].includes(type)) {
-      sql += ' AND log_type = ?';
+      sql += ' AND l.log_type = ?';
       params.push(type);
     }
 
@@ -4765,18 +4789,18 @@ app.get('/api/logs', auth, async (req, res) => {
     const rangeStart = startTime || startDate;
     const rangeEnd = endTime || endDate;
     if (rangeStart && rangeEnd) {
-      sql += ' AND time_from BETWEEN ? AND ?';
+      sql += ' AND l.time_from BETWEEN ? AND ?';
       params.push(rangeStart, rangeEnd);
     }
 
     // 搜索关键词过滤
     if (q && q.trim() !== '') {
-      sql += ' AND content LIKE ?';
-      params.push(`%${q.trim()}%`);
+      sql += ' AND (l.content LIKE ? OR l.title LIKE ?)';
+      params.push(`%${q.trim()}%`, `%${q.trim()}%`);
     }
 
     // 时间倒序，限制100条
-    sql += ' ORDER BY created_at DESC LIMIT 100';
+    sql += ' ORDER BY l.created_at DESC LIMIT 100';
 
     const [rows] = await connection.execute(sql, params);
     
@@ -4784,7 +4808,7 @@ app.get('/api/logs', auth, async (req, res) => {
     await enrichLogRows(connection, rows);
     
     await connection.end();
-
+    
     // 返回前端固定结构
     res.json({
       success: true,
@@ -4792,6 +4816,9 @@ app.get('/api/logs', auth, async (req, res) => {
       data: rows.map(row => ({
         id: row.id,
         userId: row.author_user_id,
+        authorUserId: row.author_user_id,
+        authorUsername: row.author_username || '',
+        authorRealName: row.author_real_name || row.author_username || '',
         title: row.title,
         content: row.content,
         type: row.log_type,
@@ -4845,13 +4872,37 @@ app.get('/api/logs/:id', auth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const connection = await getConn();
-    const [rows] = await connection.execute(
-      'SELECT * FROM logs WHERE id = ? AND author_user_id = ? LIMIT 1',
-      [id, req.user.id]
-    );
+    
+    // 检查用户权限：管理员和部门负责人可以看到部门内所有人的日志
+    const roleNames = await getUserRoleNames(connection, req.user.id);
+    const isGlobalManager = roleNames.includes('founder') || roleNames.includes('admin');
+    const isDeptHead = roleNames.includes('dept_head');
+    
+    let sql = 'SELECT l.*, u.username AS author_username, u.real_name AS author_real_name FROM logs l LEFT JOIN users u ON l.author_user_id = u.id WHERE l.id = ?';
+    const params = [id];
+    
+    if (!isGlobalManager && !isDeptHead) {
+      // 普通用户只能看自己的日志
+      sql += ' AND l.author_user_id = ?';
+      params.push(req.user.id);
+    } else if (isDeptHead && !isGlobalManager) {
+      // 部门负责人只能看本部门的日志
+      const deptId = await getUserDepartmentId(connection, req.user.id);
+      if (deptId) {
+        sql += ' AND EXISTS (SELECT 1 FROM users u2 WHERE u2.id = l.author_user_id AND u2.department_id = ?)';
+        params.push(deptId);
+      } else {
+        sql += ' AND l.author_user_id = ?';
+        params.push(req.user.id);
+      }
+    }
+    
+    sql += ' LIMIT 1';
+    
+    const [rows] = await connection.execute(sql, params);
     if (rows.length === 0) {
       await connection.end();
-      return res.status(404).json({ success: false, message: '日志不存在' });
+      return res.status(404).json({ success: false, message: '日志不存在或无权查看' });
     }
     rows[0].images = await getImagesForSingle(connection, 'log_images', 'log_id', rows[0].id);
     
@@ -4863,6 +4914,11 @@ app.get('/api/logs/:id', auth, async (req, res) => {
         address: rows[0].address
       };
     }
+    
+    // 添加创建人信息
+    rows[0].authorUserId = rows[0].author_user_id;
+    rows[0].authorUsername = rows[0].author_username || '';
+    rows[0].authorRealName = rows[0].author_real_name || rows[0].author_username || '';
     
     await connection.end();
     res.json({ success: true, log: rows[0] });
@@ -5073,7 +5129,7 @@ app.get('/api/logs/keywords', auth, async (req, res) => {
  *                 type: boolean
  *               logStatus:
  *                 type: string
- *                 enum: [pending, completed, cancelled]
+ *                 enum: [in_progress, completed]
  *     responses:
  *       200:
  *         description: 更新成功
@@ -5131,10 +5187,11 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
       params.push(taskId);
     }
     if (logStatus !== undefined) {
-      const validStatus = ['pending', 'completed', 'cancelled'];
+      const validStatus = ['in_progress', 'completed'];
       let newStatus = logStatus.toLowerCase();
-      if (newStatus === 'in_progress') {
-        newStatus = 'pending';
+      // 兼容处理：将 'pending' 映射为 'in_progress'
+      if (newStatus === 'pending') {
+        newStatus = 'in_progress';
       }
       if (validStatus.includes(newStatus)) {
         updates.push('log_status = ?');

@@ -40,10 +40,13 @@ class LogEntry {
   final DateTime updatedAt;
   final DateTime? startTime; // 新增：开始时间
   final DateTime? endTime; // 新增：结束时间
-  final String logStatus; // 主要状态字段：pending, completed, cancelled
+  final String logStatus; // 主要状态字段：in_progress, completed
   final bool isCompleted; // 新增：完成状态（从logStatus派生）
   final List<String> images;
   final LogLocation? location; // 地理位置信息
+  final String? authorUserId; // 创建人ID
+  final String? authorUsername; // 创建人用户名
+  final String? authorRealName; // 创建人真实姓名
 
   LogEntry({
     required this.id,
@@ -61,6 +64,9 @@ class LogEntry {
     bool? isCompleted,
     List<String>? images,
     this.location,
+    this.authorUserId,
+    this.authorUsername,
+    this.authorRealName,
   }) : images = images ?? const [],
        isCompleted = isCompleted ?? (logStatus == 'completed');
 
@@ -121,6 +127,9 @@ class LogEntry {
       logStatus: _normalizeLogStatus(json['log_status'] ?? json['logStatus']),
       images: _parseImages(json['images']),
       location: _parseLocation(json['location']),
+      authorUserId: toNullableString(json['authorUserId'] ?? json['author_user_id'] ?? json['userId']),
+      authorUsername: toNullableString(json['authorUsername'] ?? json['author_username']),
+      authorRealName: toNullableString(json['authorRealName'] ?? json['author_real_name']),
     );
   }
 
@@ -193,6 +202,9 @@ class LogEntry {
     bool? isCompleted,
     List<String>? images,
     LogLocation? location,
+    String? authorUserId,
+    String? authorUsername,
+    String? authorRealName,
   }) {
     final newLogStatus = logStatus ?? this.logStatus;
     return LogEntry(
@@ -211,6 +223,9 @@ class LogEntry {
       isCompleted: isCompleted,
       images: images ?? this.images,
       location: location ?? this.location,
+      authorUserId: authorUserId ?? this.authorUserId,
+      authorUsername: authorUsername ?? this.authorUsername,
+      authorRealName: authorRealName ?? this.authorRealName,
     );
   }
 
@@ -224,30 +239,27 @@ class LogEntry {
     return copyWith(logStatus: 'pending');
   }
 
-  // 便捷方法：标记为取消
-  LogEntry markAsCancelled() {
-    return copyWith(logStatus: 'cancelled');
-  }
-
   // 静态方法：规范化状态值
   static String _normalizeLogStatus(dynamic status) {
-    if (status == null) return 'pending';
+    if (status == null) return 'in_progress';
     final statusStr = status.toString().toLowerCase();
     switch (statusStr) {
       case 'completed':
       case 'done':
       case 'finished':
         return 'completed';
-      case 'cancelled':
-      case 'canceled':
-        return 'cancelled';
-      case 'pending':
       case 'in_progress':
       case 'inprogress':
       case 'ongoing':
       case 'active':
+        return 'in_progress';
+      case 'pending':
+      case 'cancelled':
+      case 'canceled':
+        // 兼容旧数据，将 pending 和 cancelled 都映射为 in_progress
+        return 'in_progress';
       default:
-        return 'pending';
+        return 'in_progress';
     }
   }
 }

@@ -133,16 +133,11 @@ class _LogListPageState extends State<LogListPage> {
 
   Map<String, dynamic> _getStatusInfo(String status) {
     switch (status) {
-      case 'pending':
-        return {
-          'text': '待处理',
-          'color': Colors.grey,
-          'icon': Icons.pending_actions,
-        };
       case 'in_progress':
       case 'inprogress':
       case 'ongoing':
       case 'active':
+      case 'pending': // 兼容旧数据
         return {
           'text': '进行中',
           'color': Colors.blue,
@@ -156,18 +151,11 @@ class _LogListPageState extends State<LogListPage> {
           'color': Colors.green,
           'icon': Icons.check_circle,
         };
-      case 'cancelled':
-      case 'canceled':
-        return {
-          'text': '已取消',
-          'color': Colors.red,
-          'icon': Icons.cancel,
-        };
       default:
         return {
-          'text': '未知',
-          'color': Colors.black,
-          'icon': Icons.help_outline,
+          'text': '进行中', // 默认显示进行中
+          'color': Colors.blue,
+          'icon': Icons.directions_run,
         };
     }
   }

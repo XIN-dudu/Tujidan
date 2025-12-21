@@ -47,7 +47,7 @@ class _LogEditPageState extends State<LogEditPage> {
   DateTime? _endTime;
   bool _isLoading = false;
   bool _isSaving = false;
-  String _logStatus = 'pending'; // 日志状态：pending, completed, cancelled
+  String _logStatus = 'in_progress'; // 日志状态：in_progress, completed
   String? _selectedType; // work/study/life/other
   final List<String> _types = const ['work', 'study', 'life', 'other'];
   List<String> _imageDataUris = [];
@@ -80,7 +80,10 @@ class _LogEditPageState extends State<LogEditPage> {
     _selectedTime = log.time;
     _startTime = log.startTime ?? log.time;
     _endTime = log.endTime;
-    _logStatus = log.logStatus;
+    // 兼容旧数据：将 pending 或 cancelled 映射为 in_progress
+    _logStatus = (log.logStatus == 'pending' || log.logStatus == 'cancelled') 
+        ? 'in_progress' 
+        : log.logStatus;
     _imageDataUris = List<String>.from(log.images);
     
     // 加载地理位置信息
@@ -574,6 +577,38 @@ class _LogEditPageState extends State<LogEditPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      // 创建人信息（仅在编辑模式下显示）
+                      if (widget.logEntry != null && (widget.logEntry!.authorRealName != null || widget.logEntry!.authorUsername != null))
+                        Card(
+                          color: Colors.blue[50],
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.person, size: 20, color: Colors.blue),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  '创建人：',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                                Text(
+                                  widget.logEntry!.authorRealName?.isNotEmpty == true
+                                      ? widget.logEntry!.authorRealName!
+                                      : widget.logEntry!.authorUsername ?? '未知',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      if (widget.logEntry != null && (widget.logEntry!.authorRealName != null || widget.logEntry!.authorUsername != null))
+                        const SizedBox(height: 16),
                       // 日志标题
                       TextFormField(
                         controller: _titleController,
@@ -837,7 +872,7 @@ class _LogEditPageState extends State<LogEditPage> {
                             value: _logStatus,
                             items: const [
                               DropdownMenuItem<String>(
-                                value: 'pending',
+                                value: 'in_progress',
                                 child: Row(
                                   children: [
                                     Icon(
@@ -861,20 +896,6 @@ class _LogEditPageState extends State<LogEditPage> {
                                     ),
                                     SizedBox(width: 8),
                                     Text('已完成'),
-                                  ],
-                                ),
-                              ),
-                              DropdownMenuItem<String>(
-                                value: 'cancelled',
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.cancel,
-                                      color: Colors.red,
-                                      size: 16,
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text('已取消'),
                                   ],
                                 ),
                               ),

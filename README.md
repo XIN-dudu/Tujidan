@@ -1,6 +1,6 @@
-# Tujidan - 四象限应用
+# Tujidan
 
-一个基于Flutter开发的四象限任务管理应用，支持用户登录和数据持久化存储。
+一个基于Flutter开发的潘多拉任务管理应用
 
 ## 🚀 快速启动
 
@@ -72,12 +72,3 @@ Tujidan/
     ├── config.js          # 数据库配置
     └── package.json       # 依赖配置
 ```
-
-## 📞 技术支持
-如有问题，请检查：
-1. 后端服务器是否正常运行 (http://localhost:3001/api/health)
-2. 数据库连接是否成功
-3. Flutter依赖是否正确安装
-
-## 许可证
-MIT License
