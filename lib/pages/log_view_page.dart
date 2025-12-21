@@ -169,8 +169,8 @@ class _LogViewPageState extends State<LogViewPage> {
           _currentDate = _currentDate.add(Duration(days: direction));
           break;
         case ViewType.stats:
-          // 统计视图不支持日期导航
-          return;
+          _currentDate = DateTime(_currentDate.year, _currentDate.month + direction, 1);
+          break;
       }
     });
     _loadLogs();
@@ -208,7 +208,7 @@ class _LogViewPageState extends State<LogViewPage> {
       case ViewType.day:
         return '${_currentDate.year}年${_currentDate.month}月${_currentDate.day}日';
       case ViewType.stats:
-        return '统计分析';
+        return '${_currentDate.year}年${_currentDate.month}月 统计';
     }
   }
 
@@ -443,34 +443,90 @@ class _LogViewPageState extends State<LogViewPage> {
     // 1. 聚合日志类型数据
     final typeCounts = <String, int>{};
     final monthlyLogs = _logs.where((log) =>
-        log.time.year == _currentDate.year && log.time.month == _currentDate.month);
+        log.time.year == _currentDate.year && log.time.month == _currentDate.month).toList();
 
     for (var log in monthlyLogs) {
       typeCounts[log.type ?? 'other'] = (typeCounts[log.type ?? 'other'] ?? 0) + 1;
     }
+
+    // 计算统计概览数据
+    final totalLogs = monthlyLogs.length;
+    final daysInMonth = DateTime(_currentDate.year, _currentDate.month + 1, 0).day;
+    final avgLogs = totalLogs / daysInMonth;
+    
+    String mostActiveType = '无';
+    int maxTypeCount = 0;
+    typeCounts.forEach((key, value) {
+      if (value > maxTypeCount) {
+        maxTypeCount = value;
+        mostActiveType = key;
+      }
+    });
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // --- 日志类型分布饼图 ---
-          Text(
-            '${_currentDate.year}年${_currentDate.month}月 日志类型分布',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          // --- 概览卡片 ---
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  '本月日志总数',
+                  '$totalLogs',
+                  Icons.article_outlined,
+                  Colors.blue,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildStatCard(
+                  '日均提交',
+                  avgLogs.toStringAsFixed(1),
+                  Icons.analytics_outlined,
+                  Colors.orange,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          LogTypePieChart(typeCounts: typeCounts, chartRadius: 120),
-          const SizedBox(height: 32),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  '最活跃类型',
+                  mostActiveType,
+                  Icons.category_outlined,
+                  Colors.purple,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildStatCard(
+                  '部门任务数',
+                  '${_deptTaskStats.length}',
+                  Icons.apartment_outlined,
+                  Colors.green,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // --- 日志类型分布饼图 ---
+          _buildChartCard(
+            '日志类型分布',
+            LogTypePieChart(typeCounts: typeCounts, chartRadius: 120),
+          ),
+          const SizedBox(height: 24),
 
           // --- 日志活跃度趋势图 ---
-          const Text(
+          _buildChartCard(
             '本月日志活跃度',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            _buildMonthlyActivityChart(),
           ),
-          const SizedBox(height: 16),
-          _buildMonthlyActivityChart(),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
 
           // --- 部门任务统计 ---
           const Text(
@@ -479,6 +535,83 @@ class _LogViewPageState extends State<LogViewPage> {
           ),
           const SizedBox(height: 12),
           _buildDeptTaskStatsSection(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(color: color.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[800],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChartCard(String title, Widget chart) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 24),
+          chart,
         ],
       ),
     );
