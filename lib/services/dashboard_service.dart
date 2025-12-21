@@ -44,6 +44,17 @@ class DashboardService {
     );
   }
 
+  /// 按部门统计日志关键词
+  /// 返回结构: [{"departmentId": 1, "keywords": [{"keyword": "xxx", "count": 10}, ...]}, ...]
+  static Future<ApiResponse<List<Map<String, dynamic>>>> getKeywordsByDepartment() async {
+    return await ApiClient.get<List<Map<String, dynamic>>>(
+      '/stats/keywords-by-department',
+      fromJson: (data) => (data as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList(),
+    );
+  }
+
   /// 获取仪表盘任务
   static Future<ApiResponse<List<DashboardTaskItem>>> getDashboardTasks({
     int limit = defaultLimit,

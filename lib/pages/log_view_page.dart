@@ -31,6 +31,7 @@ class _LogViewPageState extends State<LogViewPage> {
   Map<String, List<String>> _logKeywords = {}; // 日志ID -> 关键词列表
   bool _isLoading = false;
   List<Map<String, dynamic>> _deptTaskStats = [];
+  List<Map<String, dynamic>> _deptKeywordStats = [];
 
   @override
   void initState() {
@@ -105,6 +106,7 @@ class _LogViewPageState extends State<LogViewPage> {
       );
       final taskResp = await TaskService.getTasks();
       final deptResp = await DashboardService.getTasksByDepartment();
+      final deptKwResp = await DashboardService.getKeywordsByDepartment();
 
       // 加载关键词（仅当有日志时）
       Map<String, List<String>> keywordMap = {};
@@ -121,6 +123,7 @@ class _LogViewPageState extends State<LogViewPage> {
           _tasks = taskResp.success && taskResp.data != null ? taskResp.data! : [];
           _logKeywords = keywordMap;
           _deptTaskStats = deptResp.success && deptResp.data != null ? deptResp.data! : [];
+          _deptKeywordStats = deptKwResp.success && deptKwResp.data != null ? deptKwResp.data! : [];
           _isLoading = false;
         });
       }
@@ -138,6 +141,10 @@ class _LogViewPageState extends State<LogViewPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('加载部门任务统计失败: ${deptResp.message}')),
         );
+      }
+      if (!deptKwResp.success && mounted) {
+        // 仅打印日志，不弹窗打扰
+        print('加载部门关键词统计失败: ${deptKwResp.message}');
       }
     } catch (e) {
       if (mounted) {
@@ -535,6 +542,14 @@ class _LogViewPageState extends State<LogViewPage> {
           ),
           const SizedBox(height: 12),
           _buildDeptTaskStatsSection(),
+
+          const SizedBox(height: 24),
+          const Text(
+            '部门日志关键词统计',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          _buildDeptKeywordStatsSection(),
         ],
       ),
     );
@@ -767,6 +782,138 @@ class _LogViewPageState extends State<LogViewPage> {
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeptKeywordStatsSection() {
+    if (_deptKeywordStats.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.tag_rounded, size: 36, color: Colors.grey[400]),
+            const SizedBox(height: 8),
+            Text(
+              '暂无部门关键词数据',
+              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.purple.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.tag_rounded, size: 18, color: Colors.purple[700]),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '部门高频关键词',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _deptKeywordStats.length,
+            separatorBuilder: (_, __) => const Divider(height: 24),
+            itemBuilder: (context, index) {
+              final item = _deptKeywordStats[index];
+              final deptId = item['departmentId'];
+              final keywords = (item['keywords'] as List?) ?? [];
+              
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '部门 ID: $deptId',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (keywords.isEmpty)
+                    Text('无关键词', style: TextStyle(fontSize: 12, color: Colors.grey[400]))
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: keywords.map<Widget>((k) {
+                        final kwMap = k as Map;
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.purple.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.purple.withOpacity(0.1)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                kwMap['keyword'] ?? '',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.purple[700],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${kwMap['count']}',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.purple[300],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),

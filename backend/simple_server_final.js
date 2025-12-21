@@ -426,6 +426,104 @@ app.get('/api/stats/tasks-by-department', auth, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /api/stats/keywords-by-department:
+ *   get:
+ *     summary: 按部门统计日志高频关键词
+ *     tags: [Stats]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: 成功获取统计数据
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       departmentId:
+ *                         type: integer
+ *                       keywords:
+ *                         type: array
+ *                         items:
+ *                           type: object
+ *                           properties:
+ *                             keyword:
+ *                               type: string
+ *                             count:
+ *                               type: integer
+ */
+app.get('/api/stats/keywords-by-department', auth, async (req, res) => {
+  let connection;
+  try {
+    connection = await getConn();
+    
+    // 获取每个部门的关键词频率
+    const [rows] = await connection.execute(
+      `SELECT u.department_id AS departmentId, lk.keyword, COUNT(*) AS count
+       FROM log_keywords lk
+       JOIN logs l ON lk.log_id = l.id
+       JOIN users u ON l.author_user_id = u.id
+       WHERE u.department_id IS NOT NULL
+       GROUP BY u.department_id, lk.keyword
+       ORDER BY u.department_id, count DESC`
+    );
+
+    // 在内存中处理，每个部门只取前3个
+    const result = [];
+    const deptMap = new Map();
+
+    for (const row of rows) {
+      const deptId = row.departmentId;
+      if (!deptMap.has(deptId)) {
+        deptMap.set(deptId, []);
+      }
+      
+      const keywords = deptMap.get(deptId);
+      if (keywords.length < 3) {
+        keywords.push({
+          keyword: row.keyword,
+          count: row.count
+        });
+      }
+    }
+
+    deptMap.forEach((keywords, departmentId) => {
+      result.push({
+        departmentId,
+        keywords
+      });
+    });
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (e) {
+    console.error('按部门统计关键词失败:', e);
+    res.status(500).json({
+      success: false,
+      message: '获取部门关键词统计失败',
+    });
+  } finally {
+    if (connection) {
+      try {
+        await connection.end();
+      } catch (e) {
+        console.error('关闭连接失败:', e);
+      }
+    }
+  }
+});
+
 // 工具: 规范化前端传来的时间为 MySQL DATETIME 格式
 function toMySQLDateTime(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -4673,9 +4771,26 @@ app.post('/api/logs', auth, async (req, res) => {
             }
         }
         
-        // 异步提取关键词 (逻辑不变)
+        // 异步提取关键词
         (async () => {
-            // ...
+            try {
+                const keywords = await extractKeywords(content || title, 5);
+                if (keywords && keywords.length > 0) {
+                    const kwConn = await getConn();
+                    try {
+                        for (const kw of keywords) {
+                            await kwConn.execute(
+                                'INSERT INTO log_keywords (log_id, keyword, score) VALUES (?, ?, ?)',
+                                [logId, kw.word, kw.score]
+                            );
+                        }
+                    } finally {
+                        await kwConn.end();
+                    }
+                }
+            } catch (err) {
+                console.error('异步提取关键词失败:', err);
+            }
         })();
 
         // 同步任务进度 (逻辑不变)
@@ -5282,6 +5397,36 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
             "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, ?, ?, ?, ?, 'log')",
             [req.user.id, 'log_update', notificationTitle, notificationContent, id]
         );
+    }
+
+    // 如果标题或内容有更新，重新提取关键词
+    if ((title !== undefined && title !== logBeforeUpdate.title) || (content !== undefined && content !== logBeforeUpdate.content)) {
+        const newTitle = title !== undefined ? title : logBeforeUpdate.title;
+        const newContent = content !== undefined ? content : logBeforeUpdate.content;
+        
+        (async () => {
+            try {
+                const keywords = await extractKeywords(newContent || newTitle, 5);
+                if (keywords && keywords.length > 0) {
+                    const kwConn = await getConn();
+                    try {
+                        // 先删除旧的关键词
+                        await kwConn.execute('DELETE FROM log_keywords WHERE log_id = ?', [id]);
+                        // 插入新的关键词
+                        for (const kw of keywords) {
+                            await kwConn.execute(
+                                'INSERT INTO log_keywords (log_id, keyword, score) VALUES (?, ?, ?)',
+                                [id, kw.word, kw.score]
+                            );
+                        }
+                    } finally {
+                        await kwConn.end();
+                    }
+                }
+            } catch (err) {
+                console.error('异步更新关键词失败:', err);
+            }
+        })();
     }
 
     const [rows] = await connection.execute('SELECT * FROM logs WHERE id = ?', [id]);
