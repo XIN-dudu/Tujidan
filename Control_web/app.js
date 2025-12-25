@@ -338,12 +338,13 @@ async function loadUsers(forceRefresh = false) {
             }
         }
         
-        // 检查缓存
-        if (!forceRefresh && isCacheValid('users')) {
+        // 检查缓存 - 暂时完全禁用缓存，确保获取最新数据
+        if (false && !forceRefresh && isCacheValid('users')) {
             console.log('使用缓存的用户列表');
             displayUsers(dataCache.users.data.users || dataCache.users.data, dataCache.users.data.pagination);
             return;
         }
+        console.log('跳过缓存，从服务器获取最新数据');
         
         console.log('开始加载用户列表...');
         console.log('API地址:', `${API_BASE}/admin/users`);
@@ -423,6 +424,20 @@ async function loadUsers(forceRefresh = false) {
         
         const data = await response.json();
         console.log('管理员接口响应数据:', data);
+        // 调试：检查所有用户的MBTI字段
+        if (data.success && data.users && data.users.length > 0) {
+            console.log('第一个用户的MBTI值:', data.users[0].mbti, '用户ID:', data.users[0].id);
+            // 检查所有用户的MBTI值
+            data.users.forEach(u => {
+                if (u.id === 12 || u.mbti) {
+                    console.log(`前端接收 - 用户 ${u.username} (ID: ${u.id}) 的MBTI:`, {
+                        mbti: u.mbti,
+                        type: typeof u.mbti,
+                        allFields: Object.keys(u)
+                    });
+                }
+            });
+        }
         
         if (data.success) {
             const cachePayload = { users: data.users, pagination: data.pagination };
@@ -452,6 +467,12 @@ function displayUsers(users, pagination) {
     
     users.forEach(user => {
         const row = document.createElement('tr');
+        
+        // 强制调试：检查用户12的完整数据
+        if (user.id === 12) {
+            console.log('🔍 [强制调试] 用户12的完整数据:', JSON.stringify(user, null, 2));
+            console.log('🔍 [强制调试] 用户12的mbti字段:', user.mbti, '类型:', typeof user.mbti);
+        }
         
         console.log('显示用户:', user.username, '角色信息:', {
             primaryRole: user.primaryRole,
@@ -506,14 +527,44 @@ function displayUsers(users, pagination) {
         
         // MBTI显示逻辑
         let mbtiDisplay = '';
-        if (user.mbti) {
+        // 直接获取 mbti 值
+        const mbtiValue = user.mbti;
+        
+        // 强制调试：对所有用户都输出MBTI信息
+        console.log(`🔍 [MBTI调试] 用户 ${user.username} (ID: ${user.id}):`, {
+            raw: user.mbti,
+            value: mbtiValue,
+            type: typeof mbtiValue,
+            isString: typeof mbtiValue === 'string',
+            length: mbtiValue ? mbtiValue.length : 0,
+            truthy: !!mbtiValue,
+            nullCheck: mbtiValue === null,
+            undefinedCheck: mbtiValue === undefined,
+            emptyStringCheck: mbtiValue === '',
+            hasOwnProperty: user.hasOwnProperty('mbti'),
+            keys: Object.keys(user)
+        });
+        
+        // 更严格的判断：检查 mbti 是否为有效值
+        // 排除 null、undefined、空字符串、'null'、'undefined' 等无效值
+        const hasValidMbti = mbtiValue !== null && 
+                             mbtiValue !== undefined && 
+                             mbtiValue !== '' && 
+                             String(mbtiValue).trim() !== '' &&
+                             String(mbtiValue).toLowerCase() !== 'null' &&
+                             String(mbtiValue).toLowerCase() !== 'undefined';
+        
+        if (hasValidMbti) {
+            const displayValue = String(mbtiValue).trim();
+            console.log(`[显示用户] 用户 ${user.username} (ID: ${user.id}) 将显示MBTI: ${displayValue}`);
             mbtiDisplay = `
-                <span class="badge bg-warning text-dark">${user.mbti}</span>
+                <span class="badge bg-warning text-dark">${displayValue}</span>
                 <button class="btn btn-sm btn-outline-warning ms-1" onclick="assignMBTI(${user.id})" title="编辑MBTI">
                     <i class="bi bi-gear"></i>
                 </button>
             `;
         } else {
+            console.log(`[显示用户] 用户 ${user.username} (ID: ${user.id}) MBTI无效，显示"未设置"`);
             mbtiDisplay = `
                 <span class="text-muted">未设置</span>
                 <button class="btn btn-sm btn-warning ms-1" onclick="assignMBTI(${user.id})" title="设置MBTI">

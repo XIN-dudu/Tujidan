@@ -450,9 +450,9 @@ app.get('/api/health', (req, res) => {
 // 注册/创建用户接口
 app.post('/api/register', auth, async (req, res) => {
   try {
-    const { username, password, email, realName, phone, position } = req.body;
+    const { username, password, email, realName, phone, position, departmentId, mbti } = req.body;
     
-    console.log('创建用户请求:', { username, realName, email });
+    console.log('创建用户请求:', { username, realName, email, departmentId, mbti });
 
     // 验证必填字段
     if (!username || !password || !realName) {
@@ -483,8 +483,8 @@ app.post('/api/register', auth, async (req, res) => {
 
     // 插入新用户
     const [result] = await connection.execute(
-      'INSERT INTO users (username, password_hash, email, real_name, phone, position, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, NOW())',
-      [username, hashedPassword, email || null, realName, phone || null, position || null]
+      'INSERT INTO users (username, password_hash, email, real_name, phone, position, department_id, mbti, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())',
+      [username, hashedPassword, email || null, realName, phone || null, position || null, departmentId || null, mbti || null]
     );
 
     connection.release();
@@ -795,11 +795,36 @@ app.get('/api/admin/users', auth, async (req, res) => {
       console.log('用户列表缓存失效，重新加载...');
       const users = await fetchAllActiveUsers();
       userListCache = { data: users, timestamp: Date.now(), ttl: userListCache.ttl };
+      // 调试：检查缓存中的数据
+      if (users.length > 0) {
+        const user12 = users.find(u => u.id === 12);
+        if (user12) {
+          console.log('缓存中的用户12数据:', {
+            id: user12.id,
+            username: user12.username,
+            mbti: user12.mbti,
+            mbtiType: typeof user12.mbti
+          });
+        }
+      }
     }
 
     const allUsers = userListCache.data || [];
     const total = allUsers.length;
     const pageUsers = allUsers.slice(offset, offset + pageSize);
+    
+    // 调试：检查返回给前端的数据
+    if (pageUsers.length > 0) {
+      const user12 = pageUsers.find(u => u.id === 12);
+      if (user12) {
+        console.log('返回给前端的用户12数据:', {
+          id: user12.id,
+          username: user12.username,
+          mbti: user12.mbti,
+          mbtiType: typeof user12.mbti
+        });
+      }
+    }
 
     return res.json({
       success: true,
@@ -913,7 +938,7 @@ app.get('/api/users/:id', auth, async (req, res) => {
     }
     
     const [users] = await connection.execute(
-      'SELECT id, username, email, real_name, phone, position, avatar_url, status, created_at FROM users WHERE id = ?',
+      'SELECT id, username, email, real_name, phone, position, avatar_url, status, department_id, mbti, created_at FROM users WHERE id = ?',
       [userId]
     );
     connection.release();
@@ -944,6 +969,33 @@ async function fetchAllActiveUsers() {
   let connection;
   try {
     connection = await getConn();
+    // 查询用户数据，同时检查 mbti 和 mbit 字段（兼容处理）
+    // 如果表中有 mbit 字段但没有 mbti，使用 mbit；否则使用 mbti
+    let mbtiFieldName = 'mbti';
+    try {
+      const [columns] = await connection.execute(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'users' 
+        AND (COLUMN_NAME = 'mbti' OR COLUMN_NAME = 'mbit')
+      `);
+      if (columns.length > 0) {
+        // 优先使用 mbti，如果不存在则使用 mbit
+        const hasMbti = columns.some(c => c.COLUMN_NAME === 'mbti');
+        const hasMbit = columns.some(c => c.COLUMN_NAME === 'mbit');
+        if (hasMbti) {
+          mbtiFieldName = 'mbti';
+        } else if (hasMbit) {
+          mbtiFieldName = 'mbit';
+          console.warn('警告：数据库表使用的是 mbit 字段，不是 mbti！请检查数据库表结构。');
+        }
+        console.log('检测到的MBTI字段名:', mbtiFieldName, '可用字段:', columns.map(c => c.COLUMN_NAME));
+      }
+    } catch (e) {
+      console.log('无法查询表结构，使用默认字段名 mbti:', e.message);
+    }
+    
     const [users] = await connection.execute(`
       SELECT 
         u.id,
@@ -955,12 +1007,33 @@ async function fetchAllActiveUsers() {
         u.avatar_url,
         u.status,
         u.department_id,
-        u.mbti,
+        u.${mbtiFieldName} as mbti,
         u.created_at
       FROM users u
       WHERE u.status = 1
       ORDER BY u.created_at DESC
     `);
+
+    // 调试日志：检查数据库返回的原始数据
+    if (users.length > 0) {
+      console.log('数据库查询返回的原始数据示例（第一个用户）:', {
+        id: users[0].id,
+        username: users[0].username,
+        mbti: users[0].mbti,
+        mbtiType: typeof users[0].mbti,
+        allFields: Object.keys(users[0])
+      });
+      // 检查用户ID 12的数据
+      const user12 = users.find(u => u.id === 12);
+      if (user12) {
+        console.log('用户ID 12的数据库原始数据:', {
+          id: user12.id,
+          username: user12.username,
+          mbti: user12.mbti,
+          mbtiType: typeof user12.mbti
+        });
+      }
+    }
 
     if (users.length === 0) {
       return [];
@@ -988,6 +1061,22 @@ async function fetchAllActiveUsers() {
 
     return users.map(user => {
       const roleInfo = roleMap.get(user.id) || { names: [], ids: [] };
+      // 确保 mbti 字段正确返回
+      // 如果数据库返回的是空字符串，转换为 null；否则保持原值
+      let mbtiValue = user.mbti;
+      if (mbtiValue === '' || mbtiValue === null || mbtiValue === undefined) {
+        mbtiValue = null;
+      }
+      
+      // 调试日志：检查用户ID 12的MBTI值
+      if (user.id === 12) {
+        console.log('后端返回用户12的MBTI:', {
+          raw: user.mbti,
+          type: typeof user.mbti,
+          processed: mbtiValue
+        });
+      }
+      
       return {
         id: user.id,
         username: user.username,
@@ -999,7 +1088,7 @@ async function fetchAllActiveUsers() {
         status: user.status,
         department_id: user.department_id || null,
         department_name: user.department_id ? `部门${user.department_id}` : null,
-        mbti: user.mbti || null,
+        mbti: mbtiValue,
         created_at: user.created_at,
         primaryRole: roleInfo.names[0] || null,
         allRoles: roleInfo.names,
@@ -1063,9 +1152,15 @@ async function fetchAllActiveUsers() {
 app.put('/api/users/:id', auth, async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
-    const { username, realName, email, phone, position, password, departmentId, mbti } = req.body;
+    // 兼容处理：如果前端发送了错误的字段名 mbit，自动转换为 mbti
+    const { username, realName, email, phone, position, password, departmentId, mbti, mbit } = req.body;
+    // 优先使用 mbti，如果不存在则使用 mbit（兼容旧代码）
+    const mbtiValue = mbti !== undefined ? mbti : (mbit !== undefined ? mbit : undefined);
     
-    console.log('更新用户请求:', { userId, departmentId, mbti, body: req.body });
+    console.log('更新用户请求:', { userId, departmentId, mbti: mbtiValue, body: req.body });
+    if (mbit !== undefined && mbti === undefined) {
+      console.warn('警告：收到错误的字段名 mbit，已自动转换为 mbti。请清除浏览器缓存并刷新页面！');
+    }
     
     const connection = await getConn();
     
@@ -1107,11 +1202,11 @@ app.put('/api/users/:id', auth, async (req, res) => {
       updateValues.push(departmentId || null);
       console.log('添加部门更新:', departmentId);
     }
-    if (mbti !== undefined) {
+    if (mbtiValue !== undefined) {
       // 现在字段允许 NULL，所以可以更新 null 值
       updateFields.push('mbti = ?');
-      updateValues.push(mbti || null);
-      console.log('添加MBTI更新:', mbti);
+      updateValues.push(mbtiValue || null);
+      console.log('添加MBTI更新:', mbtiValue);
     }
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -1135,7 +1230,11 @@ app.put('/api/users/:id', auth, async (req, res) => {
     
     connection.release();
     
+    // 强制清除缓存，确保下次查询获取最新数据
+    console.log('清除用户列表缓存，强制刷新...');
     clearUserCache();
+    console.log('缓存已清除，userListCache:', userListCache);
+    
     return res.json({ success: true, message: '用户信息更新成功' });
   } catch (e) {
     console.error('更新用户信息失败:', e);
