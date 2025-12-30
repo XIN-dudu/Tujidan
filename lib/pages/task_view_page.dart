@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import '../widgets/page_transitions.dart';
@@ -398,7 +398,7 @@ class _TaskViewPageState extends State<TaskViewPage> {
       }
 
       final imageBytes = _decodeImageData(_task.images[index]);
-      final result = await ImageGallerySaver.saveImage(
+      final result = await ImageGallerySaverPlus.saveImage(
         imageBytes,
         quality: 100,
         name: 'task_image_${DateTime.now().millisecondsSinceEpoch}',

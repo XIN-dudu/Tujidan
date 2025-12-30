@@ -4570,9 +4570,10 @@ app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
  *         description: 权限不足
  */
 app.delete('/api/tasks/:id', auth, async (req, res) => {
+  let connection;
   try {
     const id = parseInt(req.params.id, 10);
-    const connection = await getConn();
+    connection = await getConn();
     
     // 获取用户角色
     const [roles] = await connection.execute(`
@@ -4588,7 +4589,7 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
     const isStaff = userRoles.includes('staff');
     
     // 检查任务是否存在
-    const [tasks] = await connection.execute('SELECT id, creator_id FROM tasks WHERE id = ?', [id]);
+    const [tasks] = await connection.execute('SELECT id, creator_id, task_name, assignee_id FROM tasks WHERE id = ?', [id]);
     if (tasks.length === 0) {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
@@ -4609,12 +4610,56 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
     }
     
     // founder/admin可以删除任何任务，dept_head可以删除自己创建的任务
-    await connection.execute('DELETE FROM tasks WHERE id = ?', [id]);
-    await connection.end();
-    res.json({ success: true });
+    
+    // 开启事务处理删除
+    await connection.beginTransaction();
+    try {
+        // 1. 解除日志关联
+        await connection.execute('UPDATE logs SET task_id = NULL WHERE task_id = ?', [id]);
+        
+        // 2. 尝试删除关联图片（如果有表）
+        try {
+            await connection.execute('DELETE FROM task_images WHERE task_id = ?', [id]);
+        } catch (imgErr) {
+            // 忽略表不存在的错误
+        }
+
+        // 3. 删除任务
+        await connection.execute('DELETE FROM tasks WHERE id = ?', [id]);
+
+        // 4. 发送删除通知
+        const notifyUserIds = new Set();
+        
+        // 总是通知操作者自己（确认操作）
+        notifyUserIds.add(req.user.id);
+
+        // 如果有负责人且不是操作者，通知负责人
+        if (task.assignee_id && task.assignee_id !== req.user.id) {
+            notifyUserIds.add(task.assignee_id);
+        }
+        // 如果创建者不是操作者（且不是负责人，避免重复），通知创建者
+        if (task.creator_id && task.creator_id !== req.user.id) {
+            notifyUserIds.add(task.creator_id);
+        }
+        
+        for (const userId of notifyUserIds) {
+            await connection.execute(
+                "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, 'task_update', ?, ?, ?, 'deleted_task')",
+                [userId, `任务已删除: ${task.task_name}`, `任务 "${task.task_name}" 已被删除`, id]
+            );
+        }
+
+        await connection.commit();
+        await connection.end();
+        res.json({ success: true });
+    } catch (err) {
+        await connection.rollback();
+        throw err;
+    }
   } catch (e) {
     console.error('删除任务失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
+    if (connection && connection.end) { try { await connection.end(); } catch(e){} }
+    res.status(500).json({ success: false, message: '删除失败: ' + e.message });
   }
 });
 
@@ -5635,21 +5680,50 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
  *         description: 日志不存在
  */
 app.delete('/api/logs/:id', auth, async (req, res) => {
+  let connection;
   try {
     const id = parseInt(req.params.id, 10);
-    const connection = await getConn();
+    connection = await getConn();
     
-    // 先删除关联的关键词
-    await connection.execute('DELETE FROM log_keywords WHERE log_id = ?', [id]);
-    
-    // 再删除日志
-    await connection.execute('DELETE FROM logs WHERE id = ? AND author_user_id = ?', [id, req.user.id]);
-    
-    await connection.end();
-    res.json({ success: true });
+    // 获取日志信息用于通知
+    const [logs] = await connection.execute('SELECT title FROM logs WHERE id = ? AND author_user_id = ?', [id, req.user.id]);
+    const logTitle = logs.length > 0 ? logs[0].title : '未命名日志';
+
+    // 开启事务
+    await connection.beginTransaction();
+    try {
+        // 1. 删除关联的关键词
+        await connection.execute('DELETE FROM log_keywords WHERE log_id = ?', [id]);
+        
+        // 2. 尝试删除关联图片（如果有表）
+        try {
+            await connection.execute('DELETE FROM log_images WHERE log_id = ?', [id]);
+        } catch (imgErr) {
+            // 忽略表不存在
+        }
+
+        // 3. 删除日志
+        const [result] = await connection.execute('DELETE FROM logs WHERE id = ? AND author_user_id = ?', [id, req.user.id]);
+        
+        // 4. 发送通知
+        if (result.affectedRows > 0) {
+            await connection.execute(
+                "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, 'log_update', ?, ?, ?, 'deleted_log')",
+                [req.user.id, `日志已删除: ${logTitle}`, `您的日志 "${logTitle}" 已成功删除`, id]
+            );
+        }
+
+        await connection.commit();
+        await connection.end();
+        res.json({ success: true });
+    } catch (err) {
+        await connection.rollback();
+        throw err;
+    }
   } catch (e) {
     console.error('删除日志失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
+    if (connection && connection.end) { try { await connection.end(); } catch(e){} }
+    res.status(500).json({ success: false, message: '删除失败: ' + e.message });
   }
 });
 
