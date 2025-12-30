@@ -74,10 +74,12 @@ class _TaskViewPageState extends State<TaskViewPage> {
     if (_task.assigneeId.isEmpty) {
       return '未指定';
     }
-    if (_task.assignee.isEmpty || _task.assignee == _task.assigneeId) {
-      return '用户ID: ${_task.assigneeId}';
+    // 只显示用户名，不显示ID
+    if (_task.assignee.isNotEmpty && _task.assignee != _task.assigneeId) {
+      return _task.assignee;
     }
-    return '${_task.assignee} (ID: ${_task.assigneeId})';
+    // 如果没有用户名，显示"未指定"
+    return '未指定';
   }
 
   Future<void> _reloadTask() async {

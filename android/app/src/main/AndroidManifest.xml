@@ -9,6 +9,11 @@
     <!-- Android 13+ 需要的新权限 -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     
+    <!-- 相机权限：用于拍照上传 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    
     <application
         android:label="test_flutter"
         android:name="${applicationName}"

@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:share_plus/share_plus.dart';
@@ -154,7 +156,49 @@ class _TaskEditPageState extends State<TaskEditPage> {
     }
   }
 
-  Future<void> _pickImages() async {
+  // 显示图片来源选择对话框
+  Future<void> _showImageSourceDialog() async {
+    if (_saving) return;
+    
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('选择图片来源'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('从相册选择'),
+              onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('拍照'),
+              onTap: () => Navigator.of(context).pop(ImageSource.camera),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    
+    if (source == null) return;
+    
+    if (source == ImageSource.camera) {
+      await _takePhoto();
+    } else {
+      await _pickImagesFromGallery();
+    }
+  }
+
+  // 从相册选择图片
+  Future<void> _pickImagesFromGallery() async {
     final files = await _imagePicker.pickMultiImage(imageQuality: 85);
     if (files.isEmpty) return;
     final List<String> newImages = [];
@@ -168,6 +212,123 @@ class _TaskEditPageState extends State<TaskEditPage> {
     setState(() {
       _imageDataUris.addAll(newImages);
     });
+  }
+
+  // 拍照上传（根据平台使用不同的方式）
+  Future<void> _takePhoto() async {
+    try {
+      XFile? photo;
+      
+      if (Platform.isWindows) {
+        // Windows 平台：先尝试使用 image_picker 的相机功能，如果失败再尝试 camera 包
+        try {
+          // 首先尝试使用 image_picker 的相机（在某些 Windows 配置下可能可用）
+          photo = await _imagePicker.pickImage(
+            source: ImageSource.camera,
+            imageQuality: 85,
+          );
+          
+          if (photo != null) {
+            // image_picker 成功，直接使用
+          } else {
+            // 用户取消了
+            return;
+          }
+        } catch (imagePickerError) {
+          // image_picker 失败，尝试使用 camera 包
+          try {
+            // 获取可用摄像头列表
+            final cameras = await availableCameras();
+            if (cameras.isEmpty) {
+              throw Exception('未找到可用的摄像头');
+            }
+            
+            // 优先使用前置摄像头（通常是第一个），如果没有前置则使用第一个
+            CameraDescription? selectedCamera;
+            for (final camera in cameras) {
+              if (camera.lensDirection == CameraLensDirection.front) {
+                selectedCamera = camera;
+                break;
+              }
+            }
+            selectedCamera ??= cameras.first;
+            
+            // 打开相机预览页面
+            final capturedFile = await Navigator.of(context).push<String>(
+              MaterialPageRoute(
+                builder: (context) => CameraPreviewPage(
+                  camera: selectedCamera!,
+                ),
+              ),
+            );
+            
+            if (capturedFile != null && capturedFile.isNotEmpty) {
+              photo = XFile(capturedFile);
+            } else {
+              // 用户取消了拍照
+              return;
+            }
+          } catch (cameraError) {
+            // 两种方式都失败，回退到文件选择器
+            if (mounted) {
+              final useFilePicker = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('摄像头不可用'),
+                  content: const Text('无法直接访问摄像头。是否从文件中选择图片？'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('取消'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('选择文件'),
+                    ),
+                  ],
+                ),
+              );
+              
+              if (useFilePicker == true) {
+                // 使用文件选择器
+                photo = await _imagePicker.pickImage(
+                  source: ImageSource.gallery,
+                  imageQuality: 85,
+                );
+              } else {
+                return;
+              }
+            } else {
+              return;
+            }
+          }
+        }
+      } else {
+        // Android、iOS 等平台直接使用 image_picker 的相机
+        photo = await _imagePicker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 85,
+        );
+      }
+      
+      if (photo == null) return;
+      
+      final dataUri = await _xFileToDataUri(photo);
+      if (dataUri != null) {
+        setState(() {
+          _imageDataUris.add(dataUri);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('拍照失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<String?> _xFileToDataUri(XFile file) async {
@@ -286,13 +447,12 @@ class _TaskEditPageState extends State<TaskEditPage> {
 
   String _formatAssigneeDisplay({String? id, String? name}) {
     final trimmedName = name?.trim() ?? '';
-    final trimmedId = id?.trim() ?? '';
-    if (trimmedName.isNotEmpty && trimmedId.isNotEmpty) {
-      return '$trimmedName (ID:$trimmedId)';
+    // 只显示用户名，不显示ID
+    if (trimmedName.isNotEmpty) {
+      return trimmedName;
     }
-    if (trimmedName.isNotEmpty) return trimmedName;
-    if (trimmedId.isNotEmpty) return '用户ID: $trimmedId';
-    return '';
+    // 如果没有用户名，显示"未指定"
+    return '未指定';
   }
 
   // 显示长按菜单
@@ -336,7 +496,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
             const Text('任务图片', style: TextStyle(fontWeight: FontWeight.bold)),
             if (canEdit)
               TextButton.icon(
-                onPressed: _saving ? null : _pickImages,
+                onPressed: _saving ? null : _showImageSourceDialog,
                 icon: const Icon(Icons.add_photo_alternate_outlined),
                 label: const Text('添加图片'),
               ),
@@ -396,7 +556,7 @@ class _TaskEditPageState extends State<TaskEditPage> {
                 ),
               if (canEdit)
                 GestureDetector(
-                  onTap: _pickImages,
+                  onTap: _showImageSourceDialog,
                   child: Container(
                     width: 96,
                     height: 96,
@@ -647,6 +807,144 @@ class _TaskEditPageState extends State<TaskEditPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// Windows 相机预览页面
+class CameraPreviewPage extends StatefulWidget {
+  final CameraDescription camera;
+
+  const CameraPreviewPage({
+    super.key,
+    required this.camera,
+  });
+
+  @override
+  State<CameraPreviewPage> createState() => _CameraPreviewPageState();
+}
+
+class _CameraPreviewPageState extends State<CameraPreviewPage> {
+  CameraController? _controller;
+  bool _isInitialized = false;
+  bool _isCapturing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  Future<void> _initializeCamera() async {
+    try {
+      _controller = CameraController(
+        widget.camera,
+        ResolutionPreset.high,
+        enableAudio: false,
+      );
+
+      await _controller!.initialize();
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('初始化摄像头失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  Future<void> _takePicture() async {
+    if (!_isInitialized || _controller == null || !_controller!.value.isInitialized) {
+      return;
+    }
+
+    if (_isCapturing) return;
+
+    setState(() => _isCapturing = true);
+
+    try {
+      final XFile image = await _controller!.takePicture();
+      
+      if (mounted) {
+        // 返回拍摄的照片路径
+        Navigator.of(context).pop(image.path);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('拍照失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isCapturing = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('拍照'),
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      backgroundColor: Colors.black,
+      body: _isInitialized && _controller != null && _controller!.value.isInitialized
+          ? Stack(
+              children: [
+                // 相机预览
+                Positioned.fill(
+                  child: CameraPreview(_controller!),
+                ),
+                // 拍照按钮
+                Positioned(
+                  bottom: 40,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: _isCapturing ? null : _takePicture,
+                      child: Container(
+                        width: 70,
+                        height: 70,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                          border: Border.all(color: Colors.grey, width: 4),
+                        ),
+                        child: _isCapturing
+                            ? const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: CircularProgressIndicator(strokeWidth: 3),
+                              )
+                            : const Icon(Icons.camera_alt, size: 35, color: Colors.black),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
     );
   }
 }

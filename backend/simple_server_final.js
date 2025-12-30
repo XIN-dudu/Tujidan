@@ -2256,12 +2256,15 @@ app.get('/api/tasks/:id', auth, async (req, res) => {
     // 检查是否有查看所有任务的权限
     const canViewAll = await hasPermission(req.user.id, 'task:view_all');
     
-    // 获取任务基本信息
+    // 获取任务基本信息，同时获取负责人用户名
     const [taskRows] = await connection.execute(
-      'SELECT id, task_name AS name, description, priority, status, progress, ' +
-      'plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, ' +
-      'creator_id AS creator_user_id, created_at, updated_at ' +
-      'FROM tasks WHERE id = ? LIMIT 1',
+      'SELECT t.id, t.task_name AS name, t.description, t.priority, t.status, t.progress, ' +
+      't.plan_start_time, t.plan_end_time AS due_time, t.assignee_id AS owner_user_id, ' +
+      't.creator_id AS creator_user_id, t.created_at, t.updated_at, ' +
+      'COALESCE(u.real_name, u.username, \'\') AS owner_user_name ' +
+      'FROM tasks t ' +
+      'LEFT JOIN users u ON t.assignee_id = u.id ' +
+      'WHERE t.id = ? LIMIT 1',
       [id]
     );
 
@@ -3733,7 +3736,12 @@ app.get('/api/tasks', auth, async (req, res) => {
     // 检查是否有查看所有任务的权限
     const canViewAll = await hasPermission(req.user.id, 'task:view_all');
     
-    let sql = 'SELECT id, task_name AS name, description, priority, status, progress, plan_start_time, plan_end_time AS due_time, assignee_id AS owner_user_id, creator_id AS creator_user_id, created_at, updated_at FROM tasks';
+    let sql = 'SELECT t.id, t.task_name AS name, t.description, t.priority, t.status, t.progress, ' +
+      't.plan_start_time, t.plan_end_time AS due_time, t.assignee_id AS owner_user_id, ' +
+      't.creator_id AS creator_user_id, t.created_at, t.updated_at, ' +
+      'COALESCE(u.real_name, u.username, \'\') AS owner_user_name ' +
+      'FROM tasks t ' +
+      'LEFT JOIN users u ON t.assignee_id = u.id';
     const params = [];
     let whereConditions = [];
     
@@ -3743,13 +3751,13 @@ app.get('/api/tasks', auth, async (req, res) => {
     } else {
       // 没有权限的用户只能看到自己创建的任务或分配给自己的任务
       // 如果是创建者，可以查看；如果是被分配者，且状态不是pending_assignment，可以查看
-      whereConditions.push('(creator_id = ? OR (assignee_id = ? AND status != ?))');
+      whereConditions.push('(t.creator_id = ? OR (t.assignee_id = ? AND t.status != ?))');
       params.push(req.user.id, req.user.id, 'pending_assignment');
     }
     
     // 添加关键词搜索
     if (keyword) {
-      whereConditions.push('task_name LIKE ?');
+      whereConditions.push('t.task_name LIKE ?');
       params.push(`%${keyword}%`);
     }
     
@@ -3758,7 +3766,7 @@ app.get('/api/tasks', auth, async (req, res) => {
       sql += ' WHERE ' + whereConditions.join(' AND ');
     }
     
-    sql += ` ORDER BY updated_at DESC LIMIT ${limit}`;
+    sql += ` ORDER BY t.updated_at DESC LIMIT ${limit}`;
 
     const [rows] = await connection.execute(sql, params);
     await enrichTaskRows(connection, rows);
@@ -3770,6 +3778,7 @@ app.get('/api/tasks', auth, async (req, res) => {
       name: task.name,
       description: task.description,
       owner_user_id: task.owner_user_id?.toString() ?? '',
+      owner_user_name: task.owner_user_name || '',
       creator_user_id: task.creator_user_id?.toString() ?? '',
       due_time: task.due_time,
       plan_start_time: task.plan_start_time,
