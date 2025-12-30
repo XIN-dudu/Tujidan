@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:test_flutter/auth_service.dart';
 import 'package:test_flutter/models/api_response.dart';
 import 'package:test_flutter/login_page.dart';
@@ -27,10 +30,75 @@ import 'package:test_flutter/services/task_service.dart';
 import 'package:test_flutter/services/user_service.dart';
 import 'package:test_flutter/theme/app_theme.dart';
 
+// 全局错误日志
+String _errorLog = '';
+
+Future<void> _saveErrorToFile(String error) async {
+  try {
+    // 保存到应用内部目录
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/error_log.txt');
+    final timestamp = DateTime.now().toString();
+    final logEntry = '[$timestamp] $error\n\n';
+    await file.writeAsString(logEntry, mode: FileMode.append);
+    
+    // 同时打印到控制台（可以通过 adb logcat 查看）
+    print('ERROR_LOG: $logEntry');
+    
+    // 尝试保存到外部存储（如果可用）
+    try {
+      final externalDir = await getExternalStorageDirectory();
+      if (externalDir != null) {
+        final externalFile = File('${externalDir.path}/error_log.txt');
+        await externalFile.writeAsString(logEntry, mode: FileMode.append);
+        print('ERROR_LOG_SAVED_TO: ${externalFile.path}');
+      }
+    } catch (e) {
+      print('保存到外部存储失败: $e');
+    }
+  } catch (e) {
+    print('保存错误日志失败: $e');
+  }
+}
+
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('zh_CN', null);
-  runApp(const MyApp());
+  // 使用 runZonedGuarded 捕获所有错误，包括同步错误
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    // 捕获 Flutter 框架错误
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      final errorMsg = 'Flutter Error: ${details.exception}\nStack trace: ${details.stack}';
+      print('========== FLUTTER ERROR ==========');
+      print(errorMsg);
+      print('===================================');
+      _errorLog = errorMsg;
+      _saveErrorToFile(errorMsg);
+    };
+    
+    // 捕获 Dart 异步错误
+    PlatformDispatcher.instance.onError = (error, stack) {
+      final errorMsg = 'Uncaught Error: $error\nStack trace: $stack';
+      print('========== UNCAUGHT ERROR ==========');
+      print(errorMsg);
+      print('====================================');
+      _errorLog = errorMsg;
+      _saveErrorToFile(errorMsg);
+      return true;
+    };
+    
+    await initializeDateFormatting('zh_CN', null);
+    runApp(const MyApp());
+  }, (error, stack) {
+    // 捕获所有未处理的错误
+    final errorMsg = 'Zone Error: $error\nStack trace: $stack';
+    print('========== ZONE ERROR ==========');
+    print(errorMsg);
+    print('================================');
+    _errorLog = errorMsg;
+    _saveErrorToFile(errorMsg);
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -51,7 +119,69 @@ class MyApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
+      builder: (context, child) {
+        // 如果有错误，显示错误信息
+        if (_errorLog.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('发生错误，请查看日志文件'),
+                  duration: const Duration(seconds: 5),
+                  action: SnackBarAction(
+                    label: '查看',
+                    onPressed: () {
+                      _showErrorDialog(context);
+                    },
+                  ),
+                ),
+              );
+            }
+          });
+        }
+        return child ?? const SizedBox();
+      },
       home: _RootDecider(),
+    );
+  }
+  
+  void _showErrorDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('错误信息'),
+        content: SingleChildScrollView(
+          child: Text(_errorLog.isEmpty ? '暂无错误' : _errorLog),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              try {
+                final directory = await getApplicationDocumentsDirectory();
+                final file = File('${directory.path}/error_log.txt');
+                if (await file.exists()) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('日志文件位置: ${file.path}'),
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('获取日志路径失败: $e')),
+                );
+              }
+              Navigator.of(context).pop();
+            },
+            child: const Text('查看日志文件路径'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
     );
   }
 }

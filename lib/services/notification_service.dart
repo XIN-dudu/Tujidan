@@ -2,10 +2,14 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/notification_item.dart';
+import '../config/server_config.dart';
 
 class NotificationService {
   static const String _tokenKey = 'auth_token';
-  static const String _baseUrl = 'http://127.0.0.1:3001/api';
+  
+  static Future<String> _getBaseUrl() async {
+    return await ServerConfig.getBaseUrl();
+  }
 
   static Future<String?> _getToken() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -21,8 +25,9 @@ class NotificationService {
     }
 
     try {
+      final baseUrl = await _getBaseUrl();
       final response = await http.get(
-        Uri.parse('$_baseUrl/notifications'),
+        Uri.parse('$baseUrl/notifications'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -56,8 +61,9 @@ class NotificationService {
     }
 
     try {
+      final baseUrl = await _getBaseUrl();
       final response = await http.post(
-        Uri.parse('$_baseUrl/notifications/mark-as-read'),
+        Uri.parse('$baseUrl/notifications/mark-as-read'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
@@ -85,8 +91,9 @@ class NotificationService {
     }
 
     try {
+      final baseUrl = await _getBaseUrl();
       final response = await http.delete(
-        Uri.parse('$_baseUrl/notifications/$notificationId'),
+        Uri.parse('$baseUrl/notifications/$notificationId'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',

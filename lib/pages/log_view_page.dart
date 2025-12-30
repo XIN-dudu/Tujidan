@@ -1527,6 +1527,50 @@ class _LogViewPageState extends State<LogViewPage> {
           _loadLogs();
         }
       },
+      onLongPress: () async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('确认删除'),
+            content: Text('确定要删除任务"${task.name}"吗？\n此操作不可撤销。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('删除'),
+              ),
+            ],
+          ),
+        );
+
+        if (confirmed == true && mounted) {
+          try {
+            final response = await TaskService.deleteTask(task.id);
+            if (mounted) {
+              if (response.success) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('任务删除成功'), backgroundColor: Colors.green),
+                );
+                _loadLogs();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('删除失败: ${response.message}'), backgroundColor: Colors.red),
+                );
+              }
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
+              );
+            }
+          }
+        }
+      },
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
@@ -1666,6 +1710,50 @@ class _LogViewPageState extends State<LogViewPage> {
         );
         if (changed == true) {
           _loadLogs();
+        }
+      },
+      onLongPress: () async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('确认删除'),
+            content: const Text('确定要删除这条日志吗？\n此操作不可撤销。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('删除'),
+              ),
+            ],
+          ),
+        );
+
+        if (confirmed == true && mounted) {
+          try {
+            final response = await LogService.deleteLog(log.id);
+            if (mounted) {
+              if (response.success) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('日志删除成功'), backgroundColor: Colors.green),
+                );
+                _loadLogs();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('删除失败: ${response.message}'), backgroundColor: Colors.red),
+                );
+              }
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
+              );
+            }
+          }
         }
       },
       child: Container(

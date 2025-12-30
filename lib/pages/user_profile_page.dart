@@ -33,6 +33,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
   Map<String, dynamic>? _mbtiAnalysis;
   bool _isLoadingMBTI = false;
   String _fileBaseUrl = 'http://127.0.0.1:3001';
+  List<Map<String, dynamic>> _mbtiHistory = [];
+  bool _isLoadingHistory = false;
 
   @override
   void initState() {
@@ -698,10 +700,385 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              // 查看历史记录按钮
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _showHistoryDialog,
+                  icon: const Icon(Icons.history),
+                  label: const Text('查看历史记录'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.blue[700],
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _showHistoryDialog() async {
+    if (!mounted) return;
+    setState(() => _isLoadingHistory = true);
+    
+    try {
+      final history = await MBTIService.getMBTIHistory(limit: 20);
+      if (!mounted) return;
+      setState(() {
+        _mbtiHistory = history;
+        _isLoadingHistory = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoadingHistory = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('加载历史记录失败: $e')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'MBTI分析历史记录',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (_isLoadingHistory)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else if (_mbtiHistory.isEmpty)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text('暂无历史记录'),
+                  ),
+                )
+              else
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: _mbtiHistory.length,
+                    itemBuilder: (context, index) {
+                      final item = _mbtiHistory[index];
+                      final createdAt = item['createdAt'] != null
+                          ? DateTime.tryParse(item['createdAt'].toString())
+                          : null;
+                      final dateStr = createdAt != null
+                          ? DateFormat('yyyy-MM-dd HH:mm').format(createdAt)
+                          : '未知时间';
+                      final mbtiType = item['mbtiType']?.toString() ?? '未知';
+                      final keywordsSummary = item['keywordsSummary']?.toString() ?? '';
+                      
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.blue,
+                            child: Text(
+                              mbtiType,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          title: Text(
+                            dateStr,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (keywordsSummary.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '关键词: $keywordsSummary',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey[600],
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.visibility, size: 20),
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _showHistoryDetailDialog(item);
+                                },
+                                tooltip: '查看详情',
+                              ),
+                              if (index > 0)
+                                IconButton(
+                                  icon: const Icon(Icons.compare_arrows, size: 20),
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _showComparisonDialog(_mbtiHistory[index - 1], item);
+                                  },
+                                  tooltip: '与上一条对比',
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showHistoryDetailDialog(Map<String, dynamic> historyItem) {
+    final analysisData = historyItem['analysisData'] as Map<String, dynamic>? ?? {};
+    showDialog(
+      context: context,
+      builder: (context) => _buildSuggestionsDialog(analysisData),
+    );
+  }
+
+  void _showComparisonDialog(Map<String, dynamic> item1, Map<String, dynamic> item2) {
+    final analysis1 = item1['analysisData'] as Map<String, dynamic>? ?? {};
+    final analysis2 = item2['analysisData'] as Map<String, dynamic>? ?? {};
+    
+    final date1 = item1['createdAt'] != null
+        ? DateTime.tryParse(item1['createdAt'].toString())
+        : null;
+    final date2 = item2['createdAt'] != null
+        ? DateTime.tryParse(item2['createdAt'].toString())
+        : null;
+    
+    final dateStr1 = date1 != null
+        ? DateFormat('yyyy-MM-dd HH:mm').format(date1)
+        : '未知时间';
+    final dateStr2 = date2 != null
+        ? DateFormat('yyyy-MM-dd HH:mm').format(date2)
+        : '未知时间';
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 800, maxHeight: 700),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    '历史记录对比',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.blue[50],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              dateStr1,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              child: _buildAnalysisContent(analysis1),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Container(
+                      width: 1,
+                      color: Colors.grey[300],
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.green[50],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              dateStr2,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              child: _buildAnalysisContent(analysis2),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnalysisContent(Map<String, dynamic> analysis) {
+    final suggestionsList = analysis['suggestions'] as List<dynamic>? ?? [];
+    final summary = analysis['summary'] as String? ?? '';
+    final whySuitable = analysis['whySuitable'] as String? ?? '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (whySuitable.isNotEmpty) ...[
+          const Text(
+            '为什么适合：',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            whySuitable,
+            style: const TextStyle(fontSize: 12, height: 1.5),
+          ),
+          const SizedBox(height: 16),
+        ],
+        if (suggestionsList.isNotEmpty) ...[
+          const Text(
+            '具体建议：',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...suggestionsList.asMap().entries.map((entry) {
+            final index = entry.key;
+            final suggestion = entry.value as String;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.blue,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      suggestion,
+                      style: const TextStyle(fontSize: 12, height: 1.5),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+        if (summary.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          const Text(
+            '总结：',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            summary,
+            style: const TextStyle(fontSize: 12, height: 1.5),
+          ),
+        ],
+      ],
     );
   }
 

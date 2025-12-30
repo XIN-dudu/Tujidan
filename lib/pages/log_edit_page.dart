@@ -8,7 +8,7 @@ import 'package:camera/camera.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/log_entry.dart';
@@ -581,7 +581,7 @@ class _LogEditPageState extends State<LogEditPage> {
       }
 
       final imageBytes = _decodeImageData(_imageDataUris[index]);
-      final result = await ImageGallerySaver.saveImage(
+      final result = await ImageGallerySaverPlus.saveImage(
         imageBytes,
         quality: 100,
         name: 'log_image_${DateTime.now().millisecondsSinceEpoch}',

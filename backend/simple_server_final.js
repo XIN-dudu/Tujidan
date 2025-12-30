@@ -774,6 +774,26 @@ async function setMbtiCache(userId, type, dataObj) {
   await connection.end();
 }
 
+// ---- MBTI历史记录表 ----
+async function ensureMbtiHistoryTable(connection) {
+  await connection.execute(`
+    CREATE TABLE IF NOT EXISTS user_mbti_history (
+      id INT PRIMARY KEY AUTO_INCREMENT COMMENT '历史记录ID（自增主键）',
+      user_id BIGINT NOT NULL COMMENT '用户ID',
+      mbti_type VARCHAR(10) NOT NULL COMMENT 'MBTI类型（如：INTJ, ENFP等）',
+      analysis_data JSON NOT NULL COMMENT '完整的分析数据（包含suggestions数组、summary、whySuitable等）',
+      keywords_summary TEXT COMMENT '用于生成分析的关键词摘要（前10个关键词，便于查看）',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生成时间',
+      
+      INDEX idx_user_created (user_id, created_at DESC) COMMENT '按用户和时间倒序查询',
+      INDEX idx_user_mbti (user_id, mbti_type) COMMENT '按用户和MBTI类型查询',
+      
+      CONSTRAINT fk_mbti_history_user FOREIGN KEY (user_id) 
+        REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MBTI分析历史记录表';
+  `);
+}
+
 async function ensureDashboardLogsTable(connection) {
   await connection.execute(`
     CREATE TABLE IF NOT EXISTS user_dashboard_logs (
@@ -2532,67 +2552,127 @@ app.get('/api/user/mbti-analysis', auth, async (req, res) => {
     const { startTime, endTime, force } = req.query;
 
     // 先读缓存（除非显式 force 刷新）
+    let suggestions = null;
+    let isFromCache = false;
     if (!force) {
       const cached = await getMbtiCache(req.user.id, 'analysis');
       if (cached) {
-        return res.json({ success: true, data: cached, message: '发展建议读取缓存' });
+        suggestions = cached;
+        isFromCache = true;
       }
     }
-    const connection = await getConn();
+    let mbtiUpper = null;
+    let keywords = [];
 
-    // 获取用户的MBTI，如果没有则返回错误
-    const [userRows] = await connection.execute(
-      'SELECT mbti FROM users WHERE id = ?',
-      [req.user.id]
-    );
-    const userMbti = userRows[0]?.mbti;
-    
-    if (!userMbti || userMbti.trim() === '') {
+    // 如果没有缓存，生成新的分析
+    if (!suggestions) {
+      const connection = await getConn();
+
+      // 获取用户的MBTI，如果没有则返回错误
+      const [userRows] = await connection.execute(
+        'SELECT mbti FROM users WHERE id = ?',
+        [req.user.id]
+      );
+      const userMbti = userRows[0]?.mbti;
+      
+      if (!userMbti || userMbti.trim() === '') {
+        await connection.end();
+        return res.status(400).json({
+          success: false,
+          message: '请先在个人信息中设置您的MBTI类型'
+        });
+      }
+      
+      mbtiUpper = userMbti.trim().toUpperCase();
+
+      // 获取用户的关键词
+      let sql = `
+        SELECT lk.keyword, lk.score
+        FROM log_keywords lk
+        INNER JOIN logs l ON lk.log_id = l.id
+        WHERE l.author_user_id = ?
+      `;
+      const params = [req.user.id];
+
+      if (startTime && endTime) {
+        sql += ' AND l.time_from >= ? AND l.time_from <= ?';
+        params.push(startTime, endTime);
+      }
+
+      sql += ' ORDER BY lk.score DESC';
+
+      const [rows] = await connection.execute(sql, params);
       await connection.end();
-      return res.status(400).json({
-        success: false,
-        message: '请先在个人信息中设置您的MBTI类型'
-      });
+
+      // 提取关键词
+      keywords = rows.length > 0 
+        ? rows.map(row => row.keyword)
+        : [];
+
+      // 调用大模型生成发展建议
+      const { generateDevelopmentSuggestions } = require('./llm_service');
+      suggestions = await generateDevelopmentSuggestions(mbtiUpper, keywords);
+
+      // 写入缓存（异步，不阻塞响应）
+      setMbtiCache(req.user.id, 'analysis', suggestions).catch(() => {});
+    } else {
+      // 从缓存中获取，需要获取MBTI和关键词用于保存历史记录
+      const connection = await getConn();
+      const [userRows] = await connection.execute(
+        'SELECT mbti FROM users WHERE id = ?',
+        [req.user.id]
+      );
+      const userMbti = userRows[0]?.mbti;
+      if (userMbti && userMbti.trim() !== '') {
+        mbtiUpper = userMbti.trim().toUpperCase();
+      }
+      
+      // 获取关键词用于历史记录摘要
+      let sql = `
+        SELECT lk.keyword, lk.score
+        FROM log_keywords lk
+        INNER JOIN logs l ON lk.log_id = l.id
+        WHERE l.author_user_id = ?
+      `;
+      const params = [req.user.id];
+      if (startTime && endTime) {
+        sql += ' AND l.time_from >= ? AND l.time_from <= ?';
+        params.push(startTime, endTime);
+      }
+      sql += ' ORDER BY lk.score DESC LIMIT 10';
+      const [rows] = await connection.execute(sql, params);
+      keywords = rows.map(row => row.keyword);
+      await connection.end();
     }
-    
-    const mbtiUpper = userMbti.trim().toUpperCase();
-
-    // 获取用户的关键词
-    let sql = `
-      SELECT lk.keyword, lk.score
-      FROM log_keywords lk
-      INNER JOIN logs l ON lk.log_id = l.id
-      WHERE l.author_user_id = ?
-    `;
-    const params = [req.user.id];
-
-    if (startTime && endTime) {
-      sql += ' AND l.time_from >= ? AND l.time_from <= ?';
-      params.push(startTime, endTime);
-    }
-
-    sql += ' ORDER BY lk.score DESC';
-
-    const [rows] = await connection.execute(sql, params);
-    await connection.end();
-
-    // 提取关键词
-    const keywords = rows.length > 0 
-      ? rows.map(row => row.keyword)
-      : [];
-
-    // 调用大模型生成发展建议
-    const { generateDevelopmentSuggestions } = require('./llm_service');
-    const suggestions = await generateDevelopmentSuggestions(mbtiUpper, keywords);
 
     res.json({
       success: true,
       data: suggestions,
-      message: '发展建议生成成功'
+      message: isFromCache ? '发展建议读取缓存' : '发展建议生成成功'
     });
-
-    // 写入缓存（异步，不阻塞响应）
-    setMbtiCache(req.user.id, 'analysis', suggestions).catch(() => {});
+    
+    // 保存历史记录（异步，不阻塞响应）
+    // 注意：即使是从缓存读取，也保存历史记录，以便用户可以看到每次查看的记录
+    if (mbtiUpper && suggestions) {
+      (async () => {
+        try {
+          const historyConn = await getConn();
+          await ensureMbtiHistoryTable(historyConn);
+          
+          // 生成关键词摘要（前10个）
+          const keywordsSummary = keywords.slice(0, 10).join(', ');
+          
+          await historyConn.execute(
+            'INSERT INTO user_mbti_history (user_id, mbti_type, analysis_data, keywords_summary) VALUES (?, ?, ?, ?)',
+            [req.user.id, mbtiUpper, JSON.stringify(suggestions), keywordsSummary]
+          );
+          await historyConn.end();
+          console.log('✅ MBTI历史记录保存成功');
+        } catch (err) {
+          console.error('❌ 保存MBTI历史记录失败:', err);
+        }
+      })();
+    }
   } catch (e) {
     console.error('生成发展建议失败:', e);
     res.status(500).json({
@@ -2696,6 +2776,99 @@ app.get('/api/user/development-suggestions', auth, async (req, res) => {
     res.status(500).json({
       success: false,
       message: '生成发展建议失败: ' + e.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/user/mbti-history:
+ *   get:
+ *     summary: 获取MBTI分析历史记录
+ *     tags: [用户管理]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *         description: 返回的历史记录数量
+ *     responses:
+ *       200:
+ *         description: 获取成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       mbtiType:
+ *                         type: string
+ *                       analysisData:
+ *                         type: object
+ *                       keywordsSummary:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ */
+// 获取MBTI分析历史记录
+app.get('/api/user/mbti-history', auth, async (req, res) => {
+  try {
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 50) : 20;
+
+    const connection = await getConn();
+    await ensureMbtiHistoryTable(connection);
+
+    const [rows] = await connection.execute(
+      `SELECT id, mbti_type, analysis_data, keywords_summary, created_at 
+       FROM user_mbti_history 
+       WHERE user_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT ${limit}`,
+      [req.user.id]
+    );
+
+    await connection.end();
+
+    const data = rows.map(row => {
+      let analysisData;
+      try {
+        analysisData = typeof row.analysis_data === 'string' 
+          ? JSON.parse(row.analysis_data) 
+          : row.analysis_data;
+      } catch (e) {
+        analysisData = {};
+      }
+
+      return {
+        id: row.id,
+        mbtiType: row.mbti_type,
+        analysisData: analysisData,
+        keywordsSummary: row.keywords_summary || '',
+        createdAt: row.created_at
+      };
+    });
+
+    res.json({
+      success: true,
+      data: data
+    });
+  } catch (e) {
+    console.error('获取MBTI历史记录失败:', e);
+    res.status(500).json({
+      success: false,
+      message: '获取历史记录失败: ' + e.message
     });
   }
 });
@@ -4406,9 +4579,10 @@ app.patch('/api/tasks/:id/progress', auth, async (req, res) => {
  *         description: 权限不足
  */
 app.delete('/api/tasks/:id', auth, async (req, res) => {
+  let connection;
   try {
     const id = parseInt(req.params.id, 10);
-    const connection = await getConn();
+    connection = await getConn();
     
     // 获取用户角色
     const [roles] = await connection.execute(`
@@ -4424,7 +4598,7 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
     const isStaff = userRoles.includes('staff');
     
     // 检查任务是否存在
-    const [tasks] = await connection.execute('SELECT id, creator_id FROM tasks WHERE id = ?', [id]);
+    const [tasks] = await connection.execute('SELECT id, creator_id, task_name, assignee_id FROM tasks WHERE id = ?', [id]);
     if (tasks.length === 0) {
       await connection.end();
       return res.status(404).json({ success: false, message: '任务不存在' });
@@ -4445,12 +4619,56 @@ app.delete('/api/tasks/:id', auth, async (req, res) => {
     }
     
     // founder/admin可以删除任何任务，dept_head可以删除自己创建的任务
-    await connection.execute('DELETE FROM tasks WHERE id = ?', [id]);
-    await connection.end();
-    res.json({ success: true });
+    
+    // 开启事务处理删除
+    await connection.beginTransaction();
+    try {
+        // 1. 解除日志关联
+        await connection.execute('UPDATE logs SET task_id = NULL WHERE task_id = ?', [id]);
+        
+        // 2. 尝试删除关联图片（如果有表）
+        try {
+            await connection.execute('DELETE FROM task_images WHERE task_id = ?', [id]);
+        } catch (imgErr) {
+            // 忽略表不存在的错误
+        }
+
+        // 3. 删除任务
+        await connection.execute('DELETE FROM tasks WHERE id = ?', [id]);
+
+        // 4. 发送删除通知
+        const notifyUserIds = new Set();
+        
+        // 总是通知操作者自己（确认操作）
+        notifyUserIds.add(req.user.id);
+
+        // 如果有负责人且不是操作者，通知负责人
+        if (task.assignee_id && task.assignee_id !== req.user.id) {
+            notifyUserIds.add(task.assignee_id);
+        }
+        // 如果创建者不是操作者（且不是负责人，避免重复），通知创建者
+        if (task.creator_id && task.creator_id !== req.user.id) {
+            notifyUserIds.add(task.creator_id);
+        }
+        
+        for (const userId of notifyUserIds) {
+            await connection.execute(
+                "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, 'task_update', ?, ?, ?, 'deleted_task')",
+                [userId, `任务已删除: ${task.task_name}`, `任务 "${task.task_name}" 已被删除`, id]
+            );
+        }
+
+        await connection.commit();
+        await connection.end();
+        res.json({ success: true });
+    } catch (err) {
+        await connection.rollback();
+        throw err;
+    }
   } catch (e) {
     console.error('删除任务失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
+    if (connection && connection.end) { try { await connection.end(); } catch(e){} }
+    res.status(500).json({ success: false, message: '删除失败: ' + e.message });
   }
 });
 
@@ -5471,21 +5689,50 @@ app.patch('/api/logs/:id', auth, async (req, res) => {
  *         description: 日志不存在
  */
 app.delete('/api/logs/:id', auth, async (req, res) => {
+  let connection;
   try {
     const id = parseInt(req.params.id, 10);
-    const connection = await getConn();
+    connection = await getConn();
     
-    // 先删除关联的关键词
-    await connection.execute('DELETE FROM log_keywords WHERE log_id = ?', [id]);
-    
-    // 再删除日志
-    await connection.execute('DELETE FROM logs WHERE id = ? AND author_user_id = ?', [id, req.user.id]);
-    
-    await connection.end();
-    res.json({ success: true });
+    // 获取日志信息用于通知
+    const [logs] = await connection.execute('SELECT title FROM logs WHERE id = ? AND author_user_id = ?', [id, req.user.id]);
+    const logTitle = logs.length > 0 ? logs[0].title : '未命名日志';
+
+    // 开启事务
+    await connection.beginTransaction();
+    try {
+        // 1. 删除关联的关键词
+        await connection.execute('DELETE FROM log_keywords WHERE log_id = ?', [id]);
+        
+        // 2. 尝试删除关联图片（如果有表）
+        try {
+            await connection.execute('DELETE FROM log_images WHERE log_id = ?', [id]);
+        } catch (imgErr) {
+            // 忽略表不存在
+        }
+
+        // 3. 删除日志
+        const [result] = await connection.execute('DELETE FROM logs WHERE id = ? AND author_user_id = ?', [id, req.user.id]);
+        
+        // 4. 发送通知
+        if (result.affectedRows > 0) {
+            await connection.execute(
+                "INSERT INTO notifications (user_id, type, title, content, related_id, entity_type) VALUES (?, 'log_update', ?, ?, ?, 'deleted_log')",
+                [req.user.id, `日志已删除: ${logTitle}`, `您的日志 "${logTitle}" 已成功删除`, id]
+            );
+        }
+
+        await connection.commit();
+        await connection.end();
+        res.json({ success: true });
+    } catch (err) {
+        await connection.rollback();
+        throw err;
+    }
   } catch (e) {
     console.error('删除日志失败:', e);
-    res.status(500).json({ success: false, message: '服务器内部错误' });
+    if (connection && connection.end) { try { await connection.end(); } catch(e){} }
+    res.status(500).json({ success: false, message: '删除失败: ' + e.message });
   }
 });
 
