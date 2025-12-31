@@ -6,6 +6,10 @@ import '../config/server_config.dart';
 
 class NotificationService {
   static const String _tokenKey = 'auth_token';
+  
+  static Future<String> _getBaseUrl() async {
+    return await ServerConfig.getBaseUrl();
+  }
 
   static Future<String?> _getToken() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -21,7 +25,7 @@ class NotificationService {
     }
 
     try {
-      final baseUrl = await ServerConfig.getBaseUrl();
+      final baseUrl = await _getBaseUrl();
       final response = await http.get(
         Uri.parse('$baseUrl/notifications'),
         headers: {
@@ -57,7 +61,7 @@ class NotificationService {
     }
 
     try {
-      final baseUrl = await ServerConfig.getBaseUrl();
+      final baseUrl = await _getBaseUrl();
       final response = await http.post(
         Uri.parse('$baseUrl/notifications/mark-as-read'),
         headers: {
@@ -87,7 +91,7 @@ class NotificationService {
     }
 
     try {
-      final baseUrl = await ServerConfig.getBaseUrl();
+      final baseUrl = await _getBaseUrl();
       final response = await http.delete(
         Uri.parse('$baseUrl/notifications/$notificationId'),
         headers: {

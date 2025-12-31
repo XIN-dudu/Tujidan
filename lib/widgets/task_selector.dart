@@ -167,6 +167,18 @@ class _TaskSelectorState extends State<TaskSelector> {
     return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
+  String _formatAssigneeDisplay(Task task) {
+    if (task.assigneeId.isEmpty) {
+      return '未指定';
+    }
+    // 只显示用户名，不显示ID
+    if (task.assignee.isNotEmpty && task.assignee != task.assigneeId) {
+      return task.assignee;
+    }
+    // 如果没有用户名，显示"未指定"
+    return '未指定';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -178,7 +190,7 @@ class _TaskSelectorState extends State<TaskSelector> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('任务: ${widget.selectedTask!.name}'),
-                  Text('负责人: ${widget.selectedTask!.assignee}'),
+                  Text('负责人: ${_formatAssigneeDisplay(widget.selectedTask!)}'),
                   Text('截止时间: ${_formatDateTime(widget.selectedTask!.deadline)}'),
                   Text('进度: ${widget.selectedTask!.progress}%'),
                   LinearProgressIndicator(

@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 import 'package:share_plus/share_plus.dart';
@@ -202,6 +204,18 @@ class _LogEditPageState extends State<LogEditPage> {
   Future<void> _saveLog() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // 验证：开始时间不能晚于结束时间
+    if (_startTime != null && _endTime != null && _startTime!.isAfter(_endTime!)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('开始时间不能晚于结束时间，请修改后再保存'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -325,7 +339,49 @@ class _LogEditPageState extends State<LogEditPage> {
     }
   }
 
-  Future<void> _pickImages() async {
+  // 显示图片来源选择对话框
+  Future<void> _showImageSourceDialog() async {
+    if (_isSaving) return;
+    
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('选择图片来源'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('从相册选择'),
+              onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('拍照'),
+              onTap: () => Navigator.of(context).pop(ImageSource.camera),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    
+    if (source == null) return;
+    
+    if (source == ImageSource.camera) {
+      await _takePhoto();
+    } else {
+      await _pickImagesFromGallery();
+    }
+  }
+
+  // 从相册选择图片
+  Future<void> _pickImagesFromGallery() async {
     final files = await _imagePicker.pickMultiImage(imageQuality: 85);
     if (files.isEmpty) return;
     final List<String> newImages = [];
@@ -339,6 +395,123 @@ class _LogEditPageState extends State<LogEditPage> {
     setState(() {
       _imageDataUris.addAll(newImages);
     });
+  }
+
+  // 拍照上传（根据平台使用不同的方式）
+  Future<void> _takePhoto() async {
+    try {
+      XFile? photo;
+      
+      if (Platform.isWindows) {
+        // Windows 平台：先尝试使用 image_picker 的相机功能，如果失败再尝试 camera 包
+        try {
+          // 首先尝试使用 image_picker 的相机（在某些 Windows 配置下可能可用）
+          photo = await _imagePicker.pickImage(
+            source: ImageSource.camera,
+            imageQuality: 85,
+          );
+          
+          if (photo != null) {
+            // image_picker 成功，直接使用
+          } else {
+            // 用户取消了
+            return;
+          }
+        } catch (imagePickerError) {
+          // image_picker 失败，尝试使用 camera 包
+          try {
+            // 获取可用摄像头列表
+            final cameras = await availableCameras();
+            if (cameras.isEmpty) {
+              throw Exception('未找到可用的摄像头');
+            }
+            
+            // 优先使用前置摄像头（通常是第一个），如果没有前置则使用第一个
+            CameraDescription? selectedCamera;
+            for (final camera in cameras) {
+              if (camera.lensDirection == CameraLensDirection.front) {
+                selectedCamera = camera;
+                break;
+              }
+            }
+            selectedCamera ??= cameras.first;
+            
+            // 打开相机预览页面
+            final capturedFile = await Navigator.of(context).push<String>(
+              MaterialPageRoute(
+                builder: (context) => CameraPreviewPage(
+                  camera: selectedCamera!,
+                ),
+              ),
+            );
+            
+            if (capturedFile != null && capturedFile.isNotEmpty) {
+              photo = XFile(capturedFile);
+            } else {
+              // 用户取消了拍照
+              return;
+            }
+          } catch (cameraError) {
+            // 两种方式都失败，回退到文件选择器
+            if (mounted) {
+              final useFilePicker = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('摄像头不可用'),
+                  content: const Text('无法直接访问摄像头。是否从文件中选择图片？'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('取消'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('选择文件'),
+                    ),
+                  ],
+                ),
+              );
+              
+              if (useFilePicker == true) {
+                // 使用文件选择器
+                photo = await _imagePicker.pickImage(
+                  source: ImageSource.gallery,
+                  imageQuality: 85,
+                );
+              } else {
+                return;
+              }
+            } else {
+              return;
+            }
+          }
+        }
+      } else {
+        // Android、iOS 等平台直接使用 image_picker 的相机
+        photo = await _imagePicker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 85,
+        );
+      }
+      
+      if (photo == null) return;
+      
+      final dataUri = await _xFileToDataUri(photo);
+      if (dataUri != null) {
+        setState(() {
+          _imageDataUris.add(dataUri);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('拍照失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<String?> _xFileToDataUri(XFile file) async {
@@ -495,7 +668,7 @@ class _LogEditPageState extends State<LogEditPage> {
           children: [
             const Text('图片附件', style: TextStyle(fontWeight: FontWeight.bold)),
             TextButton.icon(
-              onPressed: _isSaving ? null : _pickImages,
+              onPressed: _isSaving ? null : _showImageSourceDialog,
               icon: const Icon(Icons.add_photo_alternate_outlined),
               label: const Text('添加图片'),
             ),
@@ -721,19 +894,33 @@ class _LogEditPageState extends State<LogEditPage> {
                               ),
                             );
                             if (time != null) {
+                              final newStartTime = DateTime(
+                                date.year,
+                                date.month,
+                                date.day,
+                                time.hour,
+                                time.minute,
+                              );
+                              
+                              // 验证：开始时间不能晚于结束时间
+                              if (_endTime != null && newStartTime.isAfter(_endTime!)) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('开始时间不能晚于结束时间，请重新选择'),
+                                      backgroundColor: Colors.red,
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+                              
                               setState(() {
-                                final newStartTime = DateTime(
-                                  date.year,
-                                  date.month,
-                                  date.day,
-                                  time.hour,
-                                  time.minute,
-                                );
                                 _startTime = newStartTime;
                                 
-                                // 如果结束时间未手动设置，或者结束时间早于新的开始时间，自动更新为开始时间的后三天
-                                if (!_endTimeManuallySet || 
-                                    (_endTime != null && _endTime!.isBefore(newStartTime))) {
+                                // 如果结束时间未手动设置，自动更新为开始时间的后三天
+                                if (!_endTimeManuallySet) {
                                   _endTime = newStartTime.add(const Duration(days: 3));
                                   _endTimeManuallySet = false; // 自动更新的，不算手动设置
                                 }
@@ -769,19 +956,31 @@ class _LogEditPageState extends State<LogEditPage> {
                               ),
                             );
                             if (time != null) {
-                              setState(() {
-                                _endTime = DateTime(
-                                  date.year,
-                                  date.month,
-                                  date.day,
-                                  time.hour,
-                                  time.minute,
-                                );
-                                _endTimeManuallySet = true; // 标记为手动设置
-                                if (_startTime != null &&
-                                    _endTime!.isBefore(_startTime!)) {
-                                  _startTime = _endTime;
+                              final newEndTime = DateTime(
+                                date.year,
+                                date.month,
+                                date.day,
+                                time.hour,
+                                time.minute,
+                              );
+                              
+                              // 验证：结束时间不能早于开始时间
+                              if (_startTime != null && newEndTime.isBefore(_startTime!)) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('结束时间不能早于开始时间，请重新选择'),
+                                      backgroundColor: Colors.red,
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
                                 }
+                                return;
+                              }
+                              
+                              setState(() {
+                                _endTime = newEndTime;
+                                _endTimeManuallySet = true; // 标记为手动设置
                               });
                             }
                           }
@@ -945,6 +1144,144 @@ class _LogEditPageState extends State<LogEditPage> {
                   ),
                 ),
               ),
+            ),
+    );
+  }
+}
+
+// Windows 相机预览页面
+class CameraPreviewPage extends StatefulWidget {
+  final CameraDescription camera;
+
+  const CameraPreviewPage({
+    super.key,
+    required this.camera,
+  });
+
+  @override
+  State<CameraPreviewPage> createState() => _CameraPreviewPageState();
+}
+
+class _CameraPreviewPageState extends State<CameraPreviewPage> {
+  CameraController? _controller;
+  bool _isInitialized = false;
+  bool _isCapturing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  Future<void> _initializeCamera() async {
+    try {
+      _controller = CameraController(
+        widget.camera,
+        ResolutionPreset.high,
+        enableAudio: false,
+      );
+
+      await _controller!.initialize();
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('初始化摄像头失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  Future<void> _takePicture() async {
+    if (!_isInitialized || _controller == null || !_controller!.value.isInitialized) {
+      return;
+    }
+
+    if (_isCapturing) return;
+
+    setState(() => _isCapturing = true);
+
+    try {
+      final XFile image = await _controller!.takePicture();
+      
+      if (mounted) {
+        // 返回拍摄的照片路径
+        Navigator.of(context).pop(image.path);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('拍照失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isCapturing = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('拍照'),
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      backgroundColor: Colors.black,
+      body: _isInitialized && _controller != null && _controller!.value.isInitialized
+          ? Stack(
+              children: [
+                // 相机预览
+                Positioned.fill(
+                  child: CameraPreview(_controller!),
+                ),
+                // 拍照按钮
+                Positioned(
+                  bottom: 40,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: _isCapturing ? null : _takePicture,
+                      child: Container(
+                        width: 70,
+                        height: 70,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                          border: Border.all(color: Colors.grey, width: 4),
+                        ),
+                        child: _isCapturing
+                            ? const Padding(
+                                padding: EdgeInsets.all(20),
+                                child: CircularProgressIndicator(strokeWidth: 3),
+                              )
+                            : const Icon(Icons.camera_alt, size: 35, color: Colors.black),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : const Center(
+              child: CircularProgressIndicator(color: Colors.white),
             ),
     );
   }

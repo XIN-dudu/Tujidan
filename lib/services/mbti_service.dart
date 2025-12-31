@@ -66,5 +66,23 @@ class MBTIService {
       return null;
     }
   }
+
+  /// 获取MBTI分析历史记录
+  static Future<List<Map<String, dynamic>>> getMBTIHistory({int limit = 20}) async {
+    try {
+      final response = await ApiClient.get<List<dynamic>>(
+        '/user/mbti-history?limit=$limit',
+        fromJson: (payload) => payload as List<dynamic>,
+      );
+
+      if (response.success && response.data != null) {
+        return response.data!.cast<Map<String, dynamic>>();
+      }
+      return [];
+    } catch (e) {
+      print('获取MBTI历史记录失败: $e');
+      return [];
+    }
+  }
 }
 
