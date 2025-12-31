@@ -1200,25 +1200,238 @@ class _LogViewPageState extends State<LogViewPage> {
     );
   }
 
+  Widget _buildWeekSummaryChart() {
+    final weekStart = _currentDate.subtract(Duration(days: _currentDate.weekday - 1));
+    final startOfFirstDay = DateTime(weekStart.year, weekStart.month, weekStart.day);
+    final endOfLastDay = startOfFirstDay.add(const Duration(days: 7));
+
+    final weekTasks = _tasks.where((t) {
+      final start = t.plannedStart ?? t.deadline;
+      final end = t.deadline;
+      return start.isBefore(endOfLastDay) && end.isAfter(startOfFirstDay);
+    }).toList();
+    
+    final weekLogs = _logs.where((l) {
+      return l.time.isAfter(startOfFirstDay) && l.time.isBefore(endOfLastDay);
+    }).toList();
+
+    weekTasks.sort((a, b) {
+      final startA = a.plannedStart ?? a.deadline;
+      final startB = b.plannedStart ?? b.deadline;
+      return startA.compareTo(startB);
+    });
+
+    weekLogs.sort((a, b) {
+      final startA = a.startTime ?? a.time;
+      final startB = b.startTime ?? b.time;
+      return startA.compareTo(startB);
+    });
+
+    if (weekTasks.isEmpty && weekLogs.isEmpty) return const SizedBox();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('本周事项时间轴', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          const SizedBox(height: 16),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final dayWidth = width / 7;
+              final totalMinutes = 7 * 24 * 60;
+              
+              return Column(
+                children: [
+                  Row(
+                    children: List.generate(7, (i) {
+                      final date = startOfFirstDay.add(Duration(days: i));
+                      final isToday = date.day == DateTime.now().day && date.month == DateTime.now().month;
+                      return SizedBox(
+                        width: dayWidth,
+                        child: Center(
+                          child: Text(
+                            '${['一', '二', '三', '四', '五', '六', '日'][i]} ${date.day}',
+                            style: TextStyle(
+                              fontSize: 10, 
+                              fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
+                              color: isToday ? Theme.of(context).colorScheme.primary : Colors.grey[600]
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  const Divider(height: 1),
+                  const SizedBox(height: 8),
+                  
+                  ...weekTasks.map((task) {
+                    final start = task.plannedStart ?? task.deadline.subtract(const Duration(hours: 1));
+                    final end = task.deadline;
+                    
+                    final effectiveStart = start.isBefore(startOfFirstDay) ? startOfFirstDay : start;
+                    final effectiveEnd = end.isAfter(endOfLastDay) ? endOfLastDay : end;
+                    
+                    if (effectiveEnd.isBefore(effectiveStart)) return const SizedBox();
+
+                    final startOffset = effectiveStart.difference(startOfFirstDay).inMinutes;
+                    final durationMinutes = effectiveEnd.difference(effectiveStart).inMinutes;
+                    
+                    double left = (startOffset / totalMinutes) * width;
+                    double barWidth = (durationMinutes / totalMinutes) * width;
+                    if (barWidth < 4) barWidth = 4;
+                    
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      height: 20,
+                      child: Stack(
+                        children: [
+                          Positioned(
+                            left: left,
+                            width: width - left, 
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: barWidth,
+                                  height: 20,
+                                  decoration: BoxDecoration(
+                                    color: _getPriorityColor(task.priority).withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: _getPriorityColor(task.priority),
+                                      width: 1,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    task.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.black87,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  
+                  if (weekLogs.isNotEmpty) ...[
+                     const SizedBox(height: 8),
+                     const Divider(height: 1, indent: 0, endIndent: 0),
+                     const SizedBox(height: 8),
+                     ...weekLogs.map((log) {
+                        final start = log.startTime ?? log.time;
+                        final end = log.endTime ?? log.time.add(const Duration(hours: 1));
+                        
+                        final effectiveStart = start.isBefore(startOfFirstDay) ? startOfFirstDay : start;
+                        final effectiveEnd = end.isAfter(endOfLastDay) ? endOfLastDay : end;
+                        
+                        if (effectiveEnd.isBefore(effectiveStart)) return const SizedBox();
+
+                        final startOffset = effectiveStart.difference(startOfFirstDay).inMinutes;
+                        final durationMinutes = effectiveEnd.difference(effectiveStart).inMinutes;
+                        
+                        double left = (startOffset / totalMinutes) * width;
+                        double barWidth = (durationMinutes / totalMinutes) * width;
+                        if (barWidth < 4) barWidth = 4;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          height: 20,
+                          child: Stack(
+                            children: [
+                              Positioned(
+                                left: left,
+                                width: width - left, 
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: barWidth,
+                                      height: 20,
+                                      decoration: BoxDecoration(
+                                        color: Colors.purple.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: Colors.purple,
+                                          width: 1,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        log.title.isNotEmpty ? log.title : log.content,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.black87,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                     }),
+                  ]
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildWeekView() {
     final weekStart = _currentDate.subtract(Duration(days: _currentDate.weekday - 1));
     final weekDays = List.generate(7, (index) => weekStart.add(Duration(days: index)));
     
     return Column(
-      children: weekDays.map((day) {
-        final dayLogs = _logs.where((log) => 
-          log.time.year == day.year && 
-          log.time.month == day.month && 
-          log.time.day == day.day
-        ).toList();
-        final dayTasks = _tasks.where((task) =>
-          task.deadline.year == day.year &&
-          task.deadline.month == day.month &&
-          task.deadline.day == day.day
-        ).toList();
-        
-        return _buildWeekDayCard(day, dayLogs, dayTasks);
-      }).toList(),
+      children: [
+        _buildWeekSummaryChart(),
+        ...weekDays.map((day) {
+          final dayLogs = _logs.where((log) => 
+            log.time.year == day.year && 
+            log.time.month == day.month && 
+            log.time.day == day.day
+          ).toList();
+          final dayTasks = _tasks.where((task) =>
+            task.deadline.year == day.year &&
+            task.deadline.month == day.month &&
+            task.deadline.day == day.day
+          ).toList();
+          
+          return _buildWeekDayCard(day, dayLogs, dayTasks);
+        }).toList(),
+      ],
     );
   }
 
@@ -1527,50 +1740,6 @@ class _LogViewPageState extends State<LogViewPage> {
           _loadLogs();
         }
       },
-      onLongPress: () async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('确认删除'),
-            content: Text('确定要删除任务"${task.name}"吗？\n此操作不可撤销。'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('删除'),
-              ),
-            ],
-          ),
-        );
-
-        if (confirmed == true && mounted) {
-          try {
-            final response = await TaskService.deleteTask(task.id);
-            if (mounted) {
-              if (response.success) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('任务删除成功'), backgroundColor: Colors.green),
-                );
-                _loadLogs();
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('删除失败: ${response.message}'), backgroundColor: Colors.red),
-                );
-              }
-            }
-          } catch (e) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
-              );
-            }
-          }
-        }
-      },
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
@@ -1710,50 +1879,6 @@ class _LogViewPageState extends State<LogViewPage> {
         );
         if (changed == true) {
           _loadLogs();
-        }
-      },
-      onLongPress: () async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('确认删除'),
-            content: const Text('确定要删除这条日志吗？\n此操作不可撤销。'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('删除'),
-              ),
-            ],
-          ),
-        );
-
-        if (confirmed == true && mounted) {
-          try {
-            final response = await LogService.deleteLog(log.id);
-            if (mounted) {
-              if (response.success) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('日志删除成功'), backgroundColor: Colors.green),
-                );
-                _loadLogs();
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('删除失败: ${response.message}'), backgroundColor: Colors.red),
-                );
-              }
-            }
-          } catch (e) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
-              );
-            }
-          }
         }
       },
       child: Container(

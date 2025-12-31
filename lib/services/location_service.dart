@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
+import '../config/server_config.dart';
 
 class LocationService {
   /// 检查并请求位置权限
@@ -83,8 +84,9 @@ class LocationService {
       // 若本地失败或跳过，调用后端高德地图接口
       if (address == null) {
         try {
+          final baseUrl = await ServerConfig.getBaseUrl();
           final url = Uri.parse(
-              'http://localhost:3001/api/geocode?lat=${position.latitude}&lon=${position.longitude}');
+              '$baseUrl/geocode?lat=${position.latitude}&lon=${position.longitude}');
           final resp = await http.get(url).timeout(const Duration(seconds: 10));
           if (resp.statusCode == 200) {
             final data = jsonDecode(resp.body);
